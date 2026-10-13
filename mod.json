@@ -1,0 +1,61 @@
+{
+  "geode": "5.10.1",
+  "gd": {
+    "win": "2.2081",
+    "android": "2.2081",
+    "mac": "2.2081",
+    "ios": "2.2081"
+  },
+  "version": "v0.1.0",
+  "id": "declan.auto-frame-window",
+  "name": "Auto Frame Window",
+  "developer": "Declan",
+  "description": "Measures every input's frame window automatically by replaying your bot macro.",
+  "tags": [
+    "utility",
+    "gameplay"
+  ],
+  "settings": {
+    "max-shift": {
+      "type": "int",
+      "name": "Max frames to test",
+      "description": "How many frames early and late each input is tested. Windows at the cap are marked as capped (could be bigger).",
+      "default": 8,
+      "min": 1,
+      "max": 60
+    },
+    "horizon": {
+      "type": "int",
+      "name": "Frames to survive after input",
+      "description": "A shifted input only counts if you survive this many frames after it. 240 = 1 second. Raise it if a late death caused by an earlier click gets missed.",
+      "default": 240,
+      "min": 30,
+      "max": 2400
+    },
+    "measure-releases": {
+      "type": "bool",
+      "name": "Measure releases too",
+      "description": "Also measure when you let go (matters for ship, wave, swing holds). Takes about twice as long.",
+      "default": false
+    },
+    "frame-source": {
+      "type": "string",
+      "name": "Frame counting",
+      "description": "How the macro's frames are matched to the game. Auto tries each option and picks the one where the macro beats the level.",
+      "default": "Auto",
+      "one-of": [
+        "Auto",
+        "Progress",
+        "Level time"
+      ]
+    },
+    "frame-budget": {
+      "type": "int",
+      "name": "Speed (ms per frame)",
+      "description": "Milliseconds of simulation per rendered frame. Higher = faster but choppier screen.",
+      "default": 14,
+      "min": 2,
+      "max": 100
+    }
+  }
+}

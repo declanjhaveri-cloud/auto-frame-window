@@ -1,0 +1,541 @@
+// Auto Frame Window
+// Replays a bot macro over and over at max speed, nudging one input at a time,
+// to measure how many frames of leeway every input really has.
+
+#include <Geode/Geode.hpp>
+#include <Geode/modify/GJBaseGameLayer.hpp>
+#include <Geode/modify/PlayLayer.hpp>
+#include <Geode/modify/PauseLayer.hpp>
+#include <Geode/modify/PlayerObject.hpp>
+#include <Geode/modify/GameStatsManager.hpp>
+#include <Geode/utils/file.hpp>
+#include <Geode/utils/async.hpp>
+
+#include <gdr/gdr.hpp>
+#include <gdr_convert.hpp>
+
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <ctime>
+#include <filesystem>
+#include <fstream>
+#include <span>
+
+#include "Measurer.hpp"
+
+using namespace geode::prelude;
+
+struct MyReplay : gdr::Replay<MyReplay, gdr::Input<>> {
+    MyReplay() : gdr::Replay<MyReplay, gdr::Input<>>("AutoFrameWindow", 1) {}
+};
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+namespace {
+
+using Clock = std::chrono::steady_clock;
+
+struct Loaded {
+    std::vector<afw::Event> events;
+    double fps = 240.0;
+    std::string botName;
+    std::string fileName;
+    bool scaled = false;
+};
+
+struct Run {
+    bool active = false;
+    bool needReset = true;
+    bool injecting = false;
+    bool died = false;
+    bool reachedEnd = false;
+    int deathFrame = 0;
+    size_t next = 0;
+    bool held[2][4] = {};     // [player2][button]
+    int attempts = 0;
+    int lastFrame = -1;
+    int stuckTicks = 0;
+    bool stuck = false;
+    Clock::time_point start;
+    double fps = 240.0;
+    std::string fileName;
+    std::string levelName;
+};
+
+afw::Measurer g_meas;
+Run g_run;
+Ref<CCLabelBMFont> g_label;
+
+int frameOf(PlayLayer* pl, afw::FrameSource src) {
+    if (src == afw::FrameSource::LevelTime) {
+        return static_cast<int>(pl->m_gameState.m_levelTime * 240.0) + 1;
+    }
+    return static_cast<int>(pl->m_gameState.m_currentProgress);
+}
+
+int macroFrame(PlayLayer* pl) {
+    auto c = g_meas.attempt().cand;
+    return frameOf(pl, c.source) + c.offset;
+}
+
+std::string lower(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+    return s;
+}
+
+std::string fmtTime(double secs) {
+    int s = static_cast<int>(secs);
+    if (s >= 3600) return fmt::format("{}h{:02}m", s / 3600, (s / 60) % 60);
+    return fmt::format("{}:{:02}", s / 60, s % 60);
+}
+
+// ---------------------------------------------------------------------------
+// Macro loading (.gdr / .gdr.json / .gdr2)
+// ---------------------------------------------------------------------------
+
+Result<Loaded> loadMacro(std::filesystem::path const& path) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) return Err("Couldn't open the file.");
+    std::vector<uint8_t> data((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    if (data.empty()) return Err("The file is empty.");
+
+    std::optional<MyReplay> replay;
+    // New binary GDR format first, then the older json / msgpack one.
+    {
+        auto res = MyReplay::importData(std::span<uint8_t>(data));
+        if (res.isOk()) replay = std::move(res).unwrap();
+    }
+    if (!replay) {
+        auto res = gdr::convert<MyReplay, gdr::Input<>>(std::span<uint8_t>(data));
+        if (res.isOk()) replay = std::move(res).unwrap();
+    }
+    if (!replay) return Err("Not a GDR macro this mod can read. Supported: .gdr, .gdr.json, .gdr2");
+
+    Loaded out;
+    out.fps = replay->framerate > 0 ? replay->framerate : 240.0;
+    out.botName = replay->botInfo.name;
+    out.fileName = path.filename().string();
+    double scale = 240.0 / out.fps;
+    out.scaled = std::abs(out.fps - 240.0) > 0.5;
+
+    for (auto const& in : replay->inputs) {
+        afw::Event e;
+        e.frame = static_cast<int>(out.scaled ? std::llround(in.frame * scale) : (long long)in.frame);
+        e.button = in.button == 0 ? 1 : in.button;
+        e.p2 = in.player2;
+        e.down = in.down;
+        out.events.push_back(e);
+    }
+    if (out.events.empty()) return Err("The macro has no inputs.");
+    return Ok(std::move(out));
+}
+
+// ---------------------------------------------------------------------------
+// Results
+// ---------------------------------------------------------------------------
+
+std::filesystem::path writeResults(std::vector<afw::Result> const& results) {
+    auto dir = Mod::get()->getSaveDir() / "results";
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+
+    std::string base = g_run.levelName.empty() ? "level" : g_run.levelName;
+    for (auto& c : base) if (!std::isalnum((unsigned char)c) && c != '-' && c != '_') c = '_';
+    std::time_t t = std::time(nullptr);
+    char stamp[32];
+    std::strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", std::localtime(&t));
+    auto stem = dir / fmt::format("{}_{}", base, stamp);
+
+    // .fwc (Frame Window Counter binary format, "FWC2")
+    {
+        std::ofstream f(stem.string() + ".fwc", std::ios::binary);
+        f.write("FWC2", 4);
+        double fps = 240.0;
+        f.write(reinterpret_cast<char const*>(&fps), sizeof(double));
+        uint32_t count = static_cast<uint32_t>(results.size());
+        f.write(reinterpret_cast<char const*>(&count), sizeof(uint32_t));
+        for (auto const& r : results) {
+            int32_t frame = r.ev.frame;
+            double window = static_cast<double>(r.window());
+            uint8_t flags = 1 | (r.ev.p2 ? 2 : 0);
+            int32_t ifCount = 1;
+            f.write(reinterpret_cast<char const*>(&frame), sizeof(int32_t));
+            f.write(reinterpret_cast<char const*>(&window), sizeof(double));
+            f.write(reinterpret_cast<char const*>(&flags), sizeof(uint8_t));
+            f.write(reinterpret_cast<char const*>(&ifCount), sizeof(int32_t));
+        }
+    }
+
+    // .csv for humans
+    {
+        std::ofstream f(stem.string() + ".csv");
+        f << "input,frame,type,player,button,early,late,window,early_capped,late_capped\n";
+        int n = 1;
+        for (auto const& r : results) {
+            f << n++ << ',' << r.ev.frame << ',' << (r.ev.down ? "press" : "release") << ','
+              << (r.ev.p2 ? 2 : 1) << ',' << r.ev.button << ',' << r.early << ',' << r.late << ','
+              << r.window() << ',' << (r.earlyCapped ? 1 : 0) << ',' << (r.lateCapped ? 1 : 0) << '\n';
+        }
+    }
+    return stem.string() + ".fwc";
+}
+
+// ---------------------------------------------------------------------------
+// Run control
+// ---------------------------------------------------------------------------
+
+void releaseHeld(PlayLayer* pl) {
+    g_run.injecting = true;
+    for (int p = 0; p < 2; p++) {
+        for (int b = 1; b < 4; b++) {
+            if (g_run.held[p][b]) pl->handleButton(false, b, p == 0);
+            g_run.held[p][b] = false;
+        }
+    }
+    g_run.injecting = false;
+}
+
+void removeLabel() {
+    if (g_label) g_label->removeFromParent();
+    g_label = nullptr;
+}
+
+void updateLabel(PlayLayer* pl) {
+    if (!g_label) {
+        g_label = CCLabelBMFont::create("", "bigFont.fnt");
+        g_label->setScale(0.35f);
+        g_label->setAnchorPoint({ 0.5f, 1.f });
+        g_label->setID("status"_spr);
+        auto win = CCDirector::get()->getWinSize();
+        g_label->setPosition({ win.width / 2.f, win.height - 6.f });
+        pl->addChild(g_label, 9999);
+    }
+    double elapsed = std::chrono::duration<double>(Clock::now() - g_run.start).count();
+    std::string text;
+    if (g_meas.phase() == afw::Measurer::Phase::Calibrating) {
+        text = fmt::format("Auto Frame Window: syncing macro (try {}/{})",
+            g_meas.calibrationTry(), g_meas.calibrationTotal());
+    }
+    else {
+        int done = g_meas.targetsDone();
+        int total = g_meas.targetCount();
+        std::string eta = "--";
+        if (done > 0) eta = fmtTime(elapsed / done * (total - done));
+        int shift = g_meas.currentShift();
+        text = fmt::format("Input {}/{}  shift {}{}  |  {} elapsed  |  ~{} left\nPause to stop (keeps finished inputs)",
+            std::min(done + 1, total), total, shift > 0 ? "+" : "", shift, fmtTime(elapsed), eta);
+    }
+    g_label->setString(text.c_str());
+}
+
+// Shown next frame so it sits on top of the pause menu.
+void showResultPopup(std::string title, std::string body, std::optional<std::filesystem::path> folder) {
+    geode::queueInMainThread([title, body, folder] {
+        if (folder) {
+            auto dir = folder->parent_path();
+            createQuickPopup(title.c_str(), body, "OK", "Open folder", 380.f, [dir](FLAlertLayer*, bool open) {
+                if (open) file::openFolder(dir);
+            });
+        }
+        else {
+            FLAlertLayer::create(title.c_str(), gd::string(body), "OK")->show();
+        }
+    });
+}
+
+void endRun(PlayLayer* pl, bool cancelled) {
+    if (!g_run.active) return;
+    releaseHeld(pl);
+    g_run.active = false;
+    removeLabel();
+
+    double elapsed = std::chrono::duration<double>(Clock::now() - g_run.start).count();
+
+    if (g_run.stuck) {
+        showResultPopup("Stopped", "The level stopped advancing during replay, so measuring was stopped. "
+            "Try again from a fresh level load without other bots or speedhacks on.", std::nullopt);
+        return;
+    }
+
+    if (g_meas.phase() == afw::Measurer::Phase::Failed) {
+        showResultPopup("Couldn't sync macro", g_meas.error(), std::nullopt);
+        return;
+    }
+
+    auto results = cancelled ? g_meas.completedResults() : g_meas.results();
+    if (results.empty()) {
+        showResultPopup("Stopped", "No inputs were finished, nothing saved.", std::nullopt);
+        return;
+    }
+
+    auto path = writeResults(results);
+
+    auto tight = std::min_element(results.begin(), results.end(),
+        [](auto const& a, auto const& b) { return a.window() < b.window(); });
+    int oneFrame = (int)std::count_if(results.begin(), results.end(), [](auto const& r) { return r.window() == 1; });
+
+    std::string body = fmt::format(
+        "{} {} inputs in {} ({} attempts).\n"
+        "1-frame inputs: <cr>{}</c>. Tightest: frame {} (window {}).\n\n"
+        "Import <cy>{}</c> in Frame Window Counter (press O, then Import).",
+        cancelled ? "Stopped early. Measured" : "Measured",
+        results.size(), fmtTime(elapsed), g_run.attempts,
+        oneFrame, tight->ev.frame, tight->window(),
+        path.filename().string());
+    showResultPopup(cancelled ? "Stopped" : "Done", body, path);
+}
+
+void finishAttempt(PlayLayer* pl, bool survived, int frame) {
+    g_meas.report(survived, frame);
+    g_run.attempts++;
+    if (g_meas.finished()) {
+        endRun(pl, false);
+        pl->resetLevel();
+        pl->pauseGame(false);
+        return;
+    }
+    g_run.needReset = true;
+}
+
+void beginAttempt(PlayLayer* pl) {
+    releaseHeld(pl);
+    pl->resetLevel();
+    g_run.next = 0;
+    g_run.died = false;
+    g_run.reachedEnd = false;
+    g_run.deathFrame = 0;
+    g_run.needReset = false;
+    g_run.lastFrame = -1;
+    g_run.stuckTicks = 0;
+}
+
+void startRun(Loaded const& macro) {
+    auto pl = PlayLayer::get();
+    if (!pl) return;
+
+    afw::Settings s;
+    s.maxShift = (int)Mod::get()->getSettingValue<int64_t>("max-shift");
+    s.horizon = (int)Mod::get()->getSettingValue<int64_t>("horizon");
+    s.measureReleases = Mod::get()->getSettingValue<bool>("measure-releases");
+    auto src = Mod::get()->getSettingValue<std::string>("frame-source");
+    s.autoSource = src == "Auto";
+    s.forcedSource = src == "Level time" ? afw::FrameSource::LevelTime : afw::FrameSource::Progress;
+    s.preferLevelTime = lower(macro.botName).find("xdbot") != std::string::npos;
+
+    g_meas.init(macro.events, s);
+    g_run = Run{};
+    g_run.active = true;
+    g_run.needReset = true;
+    g_run.start = Clock::now();
+    g_run.fps = macro.fps;
+    g_run.fileName = macro.fileName;
+    g_run.levelName = pl->m_level ? std::string(pl->m_level->m_levelName) : "level";
+
+    if (pl->m_isPracticeMode) pl->togglePracticeMode(false);
+    updateLabel(pl);
+}
+
+void pickAndStart() {
+    file::FilePickOptions options;
+    options.filters.push_back({ "GD Replay (*.gdr, *.gdr2, *.json)", { "*.gdr", "*.gdr2", "*.json" } });
+
+    async::spawn(file::pick(file::PickMode::OpenFile, options), [](file::PickResult res) {
+        if (!res.isOk()) return;
+        auto opt = res.unwrap();
+        if (!opt) return;
+
+        auto loaded = loadMacro(*opt);
+        if (loaded.isErr()) {
+            FLAlertLayer::create("Can't load macro", gd::string(loaded.unwrapErr()), "OK")->show();
+            return;
+        }
+        auto macro = std::move(loaded).unwrap();
+        int presses = (int)std::count_if(macro.events.begin(), macro.events.end(), [](auto& e) { return e.down; });
+        bool rel = Mod::get()->getSettingValue<bool>("measure-releases");
+
+        std::string body = fmt::format(
+            "<cy>{}</c>: {} presses, {} inputs total{}.\n\n"
+            "This replays the level many times at max speed and will measure {} inputs. "
+            "Don't touch anything; pause to stop early.{}",
+            macro.fileName, presses, macro.events.size(),
+            macro.botName.empty() ? "" : fmt::format(" ({})", macro.botName),
+            rel ? (int)macro.events.size() : presses,
+            macro.scaled ? fmt::format("\n<cr>Macro is {} TPS, converted to 240. Results may be off.</c>", macro.fps) : "");
+
+        createQuickPopup("Auto Frame Window", body, "Cancel", "Start", 380.f, [macro](FLAlertLayer*, bool start) {
+            if (!start) return;
+            auto pl = PlayLayer::get();
+            if (!pl) return;
+            // Close the pause menu and go.
+            auto scene = CCDirector::get()->getRunningScene();
+            if (auto pause = scene ? scene->getChildByType<PauseLayer>(0) : nullptr) {
+                pause->onResume(nullptr);
+            }
+            startRun(macro);
+        });
+    });
+}
+
+} // namespace
+
+// ---------------------------------------------------------------------------
+// Hooks
+// ---------------------------------------------------------------------------
+
+class $modify(AFWBaseLayer, GJBaseGameLayer) {
+    // Inputs fire right after the game processes a tick, same as xdBot does.
+    void processCommands(float dt, bool isHalfTick, bool isLastTick) {
+        GJBaseGameLayer::processCommands(dt, isHalfTick, isLastTick);
+
+        auto pl = PlayLayer::get();
+        if (!g_run.active || g_run.needReset || !pl || static_cast<GJBaseGameLayer*>(pl) != this) return;
+        if (g_run.died || g_run.reachedEnd) return;
+
+        auto const& sched = g_meas.attempt().schedule;
+        int frame = macroFrame(pl);
+        while (g_run.next < sched.size() && frame >= sched[g_run.next].frame) {
+            auto const& ev = sched[g_run.next++];
+            g_run.injecting = true;
+            GJBaseGameLayer::handleButton(ev.down, ev.button, !ev.p2);
+            g_run.injecting = false;
+            if (ev.button >= 1 && ev.button <= 3) g_run.held[ev.p2 ? 1 : 0][ev.button] = ev.down;
+        }
+    }
+
+    // Block real clicks while measuring.
+    void handleButton(bool down, int button, bool isPlayer1) {
+        if (g_run.active && !g_run.injecting && static_cast<GJBaseGameLayer*>(PlayLayer::get()) == this) return;
+        GJBaseGameLayer::handleButton(down, button, isPlayer1);
+    }
+
+    // Fast forward: run as many physics ticks as fit in the frame budget.
+    void update(float dt) {
+        auto pl = PlayLayer::get();
+        if (!g_run.active || !pl || static_cast<GJBaseGameLayer*>(pl) != this) {
+            return GJBaseGameLayer::update(dt);
+        }
+
+        auto budget = std::chrono::milliseconds(Mod::get()->getSettingValue<int64_t>("frame-budget"));
+        auto start = Clock::now();
+
+        while (g_run.active) {
+            if (g_run.needReset) beginAttempt(pl);
+
+            // 4 ticks per call, same as normal 60fps play. Inputs and deaths are
+            // still handled per tick in processCommands / destroyPlayer.
+            GJBaseGameLayer::update(4.f / 240.f);
+
+            int nowFrame = macroFrame(pl);
+            if (nowFrame == g_run.lastFrame) {
+                if (++g_run.stuckTicks > 20000) {
+                    g_run.stuck = true;
+                    endRun(pl, true);
+                    break;
+                }
+            }
+            else {
+                g_run.lastFrame = nowFrame;
+                g_run.stuckTicks = 0;
+            }
+
+            auto const& at = g_meas.attempt();
+            if (g_run.died) {
+                finishAttempt(pl, false, g_run.deathFrame);
+            }
+            else if (g_run.reachedEnd || pl->m_levelEndAnimationStarted) {
+                finishAttempt(pl, true, macroFrame(pl));
+            }
+            else if (macroFrame(pl) >= at.stopFrame) {
+                finishAttempt(pl, true, macroFrame(pl));
+            }
+
+            if (Clock::now() - start >= budget) break;
+        }
+
+        if (g_run.active) updateLabel(pl);
+    }
+};
+
+class $modify(AFWPlayLayer, PlayLayer) {
+    void destroyPlayer(PlayerObject* player, GameObject* object) {
+        if (!g_run.active) return PlayLayer::destroyPlayer(player, object);
+        // GD "kills" the player with this at level start as an anticheat check.
+        if (object == m_anticheatSpike) return PlayLayer::destroyPlayer(player, object);
+        // Deaths after the survive line (can happen inside the same 4-tick batch) don't count.
+        if (!g_run.died && !g_run.needReset && macroFrame(this) < g_meas.attempt().stopFrame) {
+            g_run.died = true;
+            g_run.deathFrame = macroFrame(this);
+        }
+        // Skip the real death: no death effect, no progress saved.
+    }
+
+    void levelComplete() {
+        if (g_run.active) { g_run.reachedEnd = true; return; }
+        PlayLayer::levelComplete();
+    }
+
+    void playEndAnimationToPos(CCPoint pos) {
+        if (g_run.active) { g_run.reachedEnd = true; return; }
+        PlayLayer::playEndAnimationToPos(pos);
+    }
+
+    // Don't add thousands of attempts to the level.
+    void updateAttempts() {
+        if (g_run.active) return;
+        PlayLayer::updateAttempts();
+    }
+
+    void pauseGame(bool unfocused) {
+        // Alt-tabbing shouldn't cancel a long run.
+        if (g_run.active && unfocused) return;
+        if (g_run.active) {
+            endRun(this, true);
+            this->resetLevel();
+        }
+        PlayLayer::pauseGame(unfocused);
+    }
+
+    void onQuit() {
+        if (g_run.active) {
+            g_run.active = false;
+            removeLabel();
+        }
+        PlayLayer::onQuit();
+    }
+};
+
+class $modify(AFWPlayerObject, PlayerObject) {
+    void incrementJumps() {
+        if (g_run.active) return;
+        PlayerObject::incrementJumps();
+    }
+};
+
+class $modify(AFWStats, GameStatsManager) {
+    void incrementStat(char const* key, int amount) {
+        if (g_run.active) return;
+        GameStatsManager::incrementStat(key, amount);
+    }
+};
+
+class $modify(AFWPauseLayer, PauseLayer) {
+    void customSetup() {
+        PauseLayer::customSetup();
+        auto menu = this->getChildByID("right-button-menu");
+        if (!menu) return;
+
+        auto label = CCLabelBMFont::create("AFW", "bigFont.fnt");
+        auto spr = CircleButtonSprite::create(label, CircleBaseColor::Cyan, CircleBaseSize::Small);
+        auto btn = CCMenuItemSpriteExtra::create(spr, this, menu_selector(AFWPauseLayer::onAutoFrameWindow));
+        btn->setID("start-button"_spr);
+        menu->addChild(btn);
+        menu->updateLayout();
+    }
+
+    void onAutoFrameWindow(CCObject*) {
+        pickAndStart();
+    }
+};
