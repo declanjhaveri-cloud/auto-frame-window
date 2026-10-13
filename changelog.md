@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.0.1
+- **Counter shows every window 1 to your max**: one row per window, no "f". Max 10 gives rows 1 through 10, max 12 gives 1 through 12. Each row is `window  passed / total`.
+- Clicks above **Max window shown** are left out of the counter too, not just the markers and sounds. The Next line skips them.
+- Rows shrink automatically so up to 25 fit on screen.
+- Windows above 4 get their own colors (green to cyan as they get looser); 1/2/3/4 keep red/orange/yellow/green. Markers use the same colors.
+- *Max window shown* default is now 10.
+- "Next" line drops the "f" (e.g. `Next 2 in 12`).
+
 ## v1.0.0
 - **CBF precision (beta)**: measure windows to **1/2, 1/4 or 1/8 of a frame**. The shifted click fires partway through a physics tick, done by splitting the tick the way Click Between Frames does. Whole frames find the edge first, then it refines between the last good and first bad frame, so it's only somewhat slower. Off by default. *Beta: may desync on some gamemodes (slopes, moving platforms).* Fractional windows show everywhere: markers (`1.75`), HUD, results table, `.fwc`, `.csv` and L\*.
 - **Custom sound import**: pick your own `.ogg` / `.mp3` / `.wav` in settings. One sound per window size (1f / 2f / 3f / 4f+) plus a fallback for any click. Plays when you pass each measured click. Volume slider, optionally follows the game's SFX volume.

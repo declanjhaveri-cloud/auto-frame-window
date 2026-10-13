@@ -223,10 +223,11 @@ struct LevelMarks {
 struct Overlay {
     size_t next = 0;
     int lastFrame = -1;
-    int counts[4] = {};
-    int totals[4] = {};
+    int maxRow = 25;                 // one HUD row per window 1..maxRow
+    std::vector<int> counts;         // index k-1 = clicks with window k passed so far
+    std::vector<int> totals;
     Ref<CCNode> hud;
-    CCLabelBMFont* rows[4] = {};
+    std::vector<CCLabelBMFont*> rows;
     CCLabelBMFont* nextRow = nullptr;
     CCLabelBMFont* lstarRow = nullptr;
     int passed = 0;   // presses passed so far
@@ -241,7 +242,21 @@ ccColor3B const kBucketColors[4] = {
     { 255, 235, 70 },   // 3f
     { 90, 235, 100 },   // 4f+
 };
-char const* const kBucketNames[4] = { "1f", "2f", "3f", "4f+" };
+int maxShownSetting() { return (int)std::clamp<int64_t>(Mod::get()->getSettingValue<int64_t>("max-shown-window"), 1, 25); }
+
+// HUD row for a window (1..max), or -1 if it's above the max and should be hidden.
+int rowOf(double window, int maxRow) {
+    int k = std::max(1, (int)std::floor(window + 1e-9));
+    return k > maxRow ? -1 : k - 1;
+}
+
+// Red (tight) -> orange -> yellow -> green (loose). 1, 2, 3, 4+ keep the classic colors.
+ccColor3B colorForWindow(double window) {
+    int k = std::max(1, (int)std::floor(window + 1e-9));
+    if (k <= 4) return kBucketColors[k - 1];
+    float t = std::min(1.f, (k - 4) / 12.f);  // 4 -> green, 16+ -> cyan
+    return { (GLubyte)(90 - 30 * t), (GLubyte)(235 - 15 * t), (GLubyte)(100 + 155 * t) };
+}
 
 int bucketOf(double window) { return std::clamp((int)std::floor(window + 1e-9), 1, 4) - 1; }
 
@@ -420,9 +435,9 @@ void loadMarks(GJGameLevel* level) {
 void refreshHud() {
     if (!g_ov.hud) return;
     g_ov.hud->setVisible(!g_run.active);
-    for (int b = 0; b < 4; b++) {
-        if (!g_ov.rows[b]) continue;
-        g_ov.rows[b]->setString(fmt::format("{}  {} / {}", kBucketNames[b], g_ov.counts[b], g_ov.totals[b]).c_str());
+    for (size_t k = 0; k < g_ov.rows.size(); k++) {
+        if (!g_ov.rows[k]) continue;
+        g_ov.rows[k]->setString(fmt::format("{}  {} / {}", k + 1, g_ov.counts[k], g_ov.totals[k]).c_str());
     }
 }
 
@@ -431,16 +446,16 @@ void refreshNext(int frame) {
     if (!g_ov.nextRow) return;
     auto const& marks = g_marks.marks;
     size_t i = g_ov.next;
-    while (i < marks.size() && !marks[i].down) i++;
+    while (i < marks.size() && (!marks[i].down || rowOf(marks[i].window, g_ov.maxRow) < 0)) i++;
     if (i >= marks.size()) {
         g_ov.nextRow->setString("Next: -");
         g_ov.nextRow->setColor({ 200, 200, 200 });
         return;
     }
     auto const& m = marks[i];
-    g_ov.nextRow->setString(fmt::format("Next {}f{} in {}", fmtW(m.window), m.capped ? "+" : "",
+    g_ov.nextRow->setString(fmt::format("Next {}{} in {}", fmtW(m.window), m.capped ? "+" : "",
         std::max(0, m.frame - frame)).c_str());
-    g_ov.nextRow->setColor(kBucketColors[bucketOf(m.window)]);
+    g_ov.nextRow->setColor(colorForWindow(m.window));
 }
 
 // "L* All 412.3 / 1240.0": precision needed so far vs. for the whole level.
@@ -461,7 +476,7 @@ void refreshLStarRow() {
 void removeHud() {
     if (g_ov.hud) g_ov.hud->removeFromParent();
     g_ov.hud = nullptr;
-    for (auto& r : g_ov.rows) r = nullptr;
+    g_ov.rows.clear();
     g_ov.nextRow = nullptr;
     g_ov.lstarRow = nullptr;
 }
@@ -471,7 +486,14 @@ void buildOverlay(PlayLayer* pl) {
     g_ov = Overlay{};
     if (!g_marks.loaded) return;
 
-    for (auto const& m : g_marks.marks) if (m.down) g_ov.totals[bucketOf(m.window)]++;
+    g_ov.maxRow = maxShownSetting();
+    g_ov.counts.assign(g_ov.maxRow, 0);
+    g_ov.totals.assign(g_ov.maxRow, 0);
+    for (auto const& m : g_marks.marks) {
+        if (!m.down) continue;
+        int r = rowOf(m.window, g_ov.maxRow);
+        if (r >= 0) g_ov.totals[r]++;
+    }
 
     if (!Mod::get()->getSettingValue<bool>("show-hud")) return;
 
@@ -485,16 +507,20 @@ void buildOverlay(PlayLayer* pl) {
     title->setAnchorPoint({ 1.f, 1.f });
     hud->addChild(title);
 
+    // Shrink rows so up to 25 still fit on screen.
+    float spacing = std::min(12.f, (win.height - 70.f) / g_ov.maxRow);
+    float scale = 0.35f * spacing / 12.f;
     float y = -16.f;
-    for (int b = 0; b < 4; b++) {
+    g_ov.rows.assign(g_ov.maxRow, nullptr);
+    for (int k = 0; k < g_ov.maxRow; k++) {
         auto row = CCLabelBMFont::create("", "bigFont.fnt");
-        row->setScale(0.35f);
+        row->setScale(scale);
         row->setAnchorPoint({ 1.f, 1.f });
         row->setPosition({ 0.f, y });
-        row->setColor(kBucketColors[b]);
+        row->setColor(colorForWindow(k + 1));
         hud->addChild(row);
-        g_ov.rows[b] = row;
-        y -= 12.f;
+        g_ov.rows[k] = row;
+        y -= spacing;
     }
     if (Mod::get()->getSettingValue<bool>("show-next")) {
         auto row = CCLabelBMFont::create("", "bigFont.fnt");
@@ -570,7 +596,7 @@ void spawnMarker(PlayLayer* pl, Mark const& m) {
     auto player = m.p2 ? pl->m_player2 : pl->m_player1;
     if (!player || !player->getParent()) return;
 
-    auto color = kBucketColors[bucketOf(m.window)];
+    auto color = colorForWindow(m.window);
     ccColor4F fill = { color.r / 255.f, color.g / 255.f, color.b / 255.f, 0.35f };
     ccColor4F ring = { color.r / 255.f, color.g / 255.f, color.b / 255.f, 1.f };
 
@@ -611,9 +637,13 @@ void tickOverlay(PlayLayer* pl) {
     if (frame < g_ov.lastFrame) {
         g_ov.next = 0;
         g_ov.passed = 0;
-        for (auto& c : g_ov.counts) c = 0;
+        std::fill(g_ov.counts.begin(), g_ov.counts.end(), 0);
         while (g_ov.next < marks.size() && marks[g_ov.next].frame < frame) {
-            if (marks[g_ov.next].down) { g_ov.counts[bucketOf(marks[g_ov.next].window)]++; g_ov.passed++; }
+            if (marks[g_ov.next].down) {
+                int r = rowOf(marks[g_ov.next].window, g_ov.maxRow);
+                if (r >= 0 && r < (int)g_ov.counts.size()) g_ov.counts[r]++;
+                g_ov.passed++;
+            }
             g_ov.next++;
         }
         refreshHud();
@@ -627,7 +657,7 @@ void tickOverlay(PlayLayer* pl) {
     while (g_ov.next < marks.size() && frame >= marks[g_ov.next].frame) {
         auto const& m = marks[g_ov.next++];
         if (!m.down) continue;
-        g_ov.counts[bucketOf(m.window)]++;
+        if (int r = rowOf(m.window, g_ov.maxRow); r >= 0 && r < (int)g_ov.counts.size()) g_ov.counts[r]++;
         g_ov.passed++;
         changed = true;
         if (shownWindow(m)) {

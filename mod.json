@@ -4,7 +4,7 @@
     "win": "2.2081",
     "android": "2.2081"
   },
-  "version": "v1.0.0",
+  "version": "v1.0.1",
   "id": "declan.auto-frame-window",
   "name": "Auto Frame Window",
   "developer": "Declan",
@@ -76,7 +76,7 @@
     "show-hud": {
       "type": "bool",
       "name": "Show window HUD",
-      "description": "Top-right counter of 1f / 2f / 3f / 4f+ clicks so far (needs a measured level). Applies on next level load.",
+      "description": "Top-right counter with one row per frame window (1 up to Max window shown), clicks passed / total. Applies on next level load.",
       "default": true
     },
     "show-next": {
@@ -94,8 +94,8 @@
     "max-shown-window": {
       "type": "int",
       "name": "Max window shown",
-      "description": "Only show markers and play sounds for clicks with a frame window up to this (1 to 25). E.g. 16 hides anything above 16.",
-      "default": 25,
+      "description": "Highest frame window shown (1 to 25). The top-right counter gets one row per window from 1 up to this, and markers, sounds and the Next line skip clicks above it. Applies on next level load for the counter.",
+      "default": 10,
       "min": 1,
       "max": 25
     },
