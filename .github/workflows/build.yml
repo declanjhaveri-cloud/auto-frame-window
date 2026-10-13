@@ -17,15 +17,6 @@ jobs:
             os: windows-latest
             extra-cmake-args: "-DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl"
 
-          # macOS
-          - name: macOS
-            os: macos-latest
-
-          # ios
-          - name: iOS
-            os: macos-latest
-            target: iOS
-
           # Android
           - name: Android32
             os: ubuntu-latest
