@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.2.2
+Fixes from the Geode index guidelines:
+- **Credits** added to the mod description and LICENSE: Frame Window Counter (C0nscious / hyper-5) for the L\* math and `.fwc` format, Click Between Frames (syzzi) for the CBF tick-splitting idea, and maxnut's GDR libraries. Required for mods based on others' work.
+- **Mod-prefixed node IDs** on everything the mod adds to the game (click markers, AFW menu and its buttons), for compatibility with other mods.
+- The index build has no network access or downloads at all, so the "runtime code" rule doesn't apply. The update checker only exists in the GitHub build.
+
 ## v1.2.1
 - **Two versions now**:
   - **GitHub version** (Releases page): keeps the in-game **update checker** with one-click updates.

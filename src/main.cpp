@@ -601,6 +601,7 @@ void spawnMarker(PlayLayer* pl, Mark const& m) {
     ccColor4F ring = { color.r / 255.f, color.g / 255.f, color.b / 255.f, 1.f };
 
     auto node = CCNode::create();
+    node->setID("click-marker"_spr);
     node->setPosition(player->getPosition());
 
     auto draw = CCDrawNode::create();
@@ -968,7 +969,9 @@ protected:
         if (!Popup::init(260.f, 230.f)) return false;
         this->setTitle("Auto Frame Window");
 
+        this->setID("menu"_spr);
         auto menu = CCMenu::create();
+        menu->setID("menu-buttons"_spr);
         menu->setContentSize({ 220.f, 180.f });
         menu->setLayout(ColumnLayout::create()->setGap(6.f)->setAxisReverse(true)->setAxisAlignment(AxisAlignment::Center));
 
