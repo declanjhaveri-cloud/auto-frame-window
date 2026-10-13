@@ -1,7 +1,10 @@
 # Changelog
 
+## v1.0.2
+- Counter rows are now `window: count`, e.g. `1: 3`, `2: 7`. The count goes up live as you pass clicks with that window.
+
 ## v1.0.1
-- **Counter shows every window 1 to your max**: one row per window, no "f". Max 10 gives rows 1 through 10, max 12 gives 1 through 12. Each row is `window  passed / total`.
+- **Counter shows every window 1 to your max**: one row per window, no "f". Max 10 gives rows 1 through 10, max 12 gives 1 through 12. 
 - Clicks above **Max window shown** are left out of the counter too, not just the markers and sounds. The Next line skips them.
 - Rows shrink automatically so up to 25 fit on screen.
 - Windows above 4 get their own colors (green to cyan as they get looser); 1/2/3/4 keep red/orange/yellow/green. Markers use the same colors.

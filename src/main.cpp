@@ -437,7 +437,7 @@ void refreshHud() {
     g_ov.hud->setVisible(!g_run.active);
     for (size_t k = 0; k < g_ov.rows.size(); k++) {
         if (!g_ov.rows[k]) continue;
-        g_ov.rows[k]->setString(fmt::format("{}  {} / {}", k + 1, g_ov.counts[k], g_ov.totals[k]).c_str());
+        g_ov.rows[k]->setString(fmt::format("{}: {}", k + 1, g_ov.counts[k]).c_str());
     }
 }
 
