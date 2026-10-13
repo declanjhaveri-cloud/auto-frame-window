@@ -14,3 +14,5 @@ Pause at any time to stop. Finished inputs are still saved.
 No attempts, jumps or progress are saved to your level while it runs.
 
 The AFW menu also has **Re-measure** (same macro again), **View results** (table of every click) and **Clear results**. Use *Section start / end %* in settings to measure a long level in chunks.
+
+**L\*** (Base / Nerve / Fatigue / CPS / All) is calculated from the measured windows and shown in the HUD and results.

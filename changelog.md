@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.3.1
+- **L\* precision** (NaNDL model) calculated from your measured windows, in the background on level load and after every measure:
+  - **Base**: raw precision from window sizes.
+  - **Nerve** (K_T): later clicks in the level weigh more.
+  - **Fatigue** (K_U): the more clicks you've done, the more each one weighs.
+  - **CPS** (K_C): fast clicking weighs more.
+  - Plus the combos **N+F, N+C, F+C** and **All**.
+- **HUD L\* row**: live L\* so far vs. the whole level, e.g. `L* All 412.3 / 1240.0`. Pick the metric (or Off) with *L\* in HUD*.
+- **View results** now shows Base / Nerve / Fatigue / CPS / All L\* at the top.
+- New settings: L\* target time (default 24h), respawn time, and the K_T / K_U / K_C constants (NaNDL defaults).
+- L\* math ported from Frame Window Counter by C0nscious (MIT) and checked to match it exactly.
+
 ## v0.2.0
 - **AFW menu**: the pause button now opens a menu with Measure, Re-measure, View results, Clear results and Settings.
 - **Re-measure**: remembers the last macro per level, so you can re-run without picking the file again.
@@ -24,5 +36,4 @@
 - No attempts, jumps, progress or completions are saved while measuring. Pause to stop; finished clicks are kept.
 
 ## Planned
-- **v0.3.1**: L* precision (Base, Nerve, Fatigue, CPS) from measured windows.
 - **v1.0.0**: Click-between-frames (CBF) support, released as **beta**.

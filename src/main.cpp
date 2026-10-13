@@ -26,6 +26,9 @@
 #include <sstream>
 
 #include "Measurer.hpp"
+#include "LStar.hpp"
+#include <thread>
+#include <atomic>
 
 using namespace geode::prelude;
 
@@ -222,6 +225,8 @@ struct Overlay {
     Ref<CCNode> hud;
     CCLabelBMFont* rows[4] = {};
     CCLabelBMFont* nextRow = nullptr;
+    CCLabelBMFont* lstarRow = nullptr;
+    int passed = 0;   // presses passed so far
 };
 
 LevelMarks g_marks;
@@ -329,7 +334,77 @@ void saveMarks(GJGameLevel* level, std::vector<afw::Result> const& results, afw:
     writeMarks(level, lm);
 }
 
-void loadMarks(GJGameLevel* level) { g_marks = readMarks(level); }
+// ---------------------------------------------------------------------------
+// L* (Nerve / Fatigue / CPS precision), computed in the background
+// ---------------------------------------------------------------------------
+
+struct LStarState {
+    bool ready = false;
+    bool computing = false;
+    afw::lstar::Output out;
+};
+LStarState g_lstar;
+std::atomic<int> g_lstarGen{ 0 };
+std::atomic<float> g_lstarProgress{ 0.f };
+
+void refreshLStarRow();
+
+afw::lstar::Params lstarParams() {
+    afw::lstar::Params p;
+    p.target = Mod::get()->getSettingValue<double>("lstar-target-hours") * 3600.0;
+    p.respawn = Mod::get()->getSettingValue<double>("lstar-respawn");
+    p.kT = Mod::get()->getSettingValue<double>("lstar-kt");
+    p.kU = Mod::get()->getSettingValue<double>("lstar-ku");
+    p.kC = Mod::get()->getSettingValue<double>("lstar-kc");
+    if (p.target <= 0) p.target = 86400.0;
+    return p;
+}
+
+void startLStar() {
+    int gen = ++g_lstarGen;
+    g_lstar = LStarState{};
+    if (!g_marks.loaded) return;
+    std::vector<afw::lstar::Click> clicks;
+    for (auto const& m : g_marks.marks) if (m.down) clicks.push_back({ (double)m.frame, (double)m.window });
+    if (clicks.empty()) return;
+    g_lstar.computing = true;
+    g_lstarProgress = 0.f;
+    auto params = lstarParams();
+    std::thread([gen, clicks = std::move(clicks), params] {
+        auto out = afw::lstar::compute(clicks, params, [gen] { return g_lstarGen.load() != gen; }, &g_lstarProgress);
+        geode::queueInMainThread([gen, out = std::move(out)]() mutable {
+            if (g_lstarGen.load() != gen) return;
+            g_lstar.out = std::move(out);
+            g_lstar.ready = true;
+            g_lstar.computing = false;
+            refreshLStarRow();
+        });
+    }).detach();
+}
+
+int lstarMetricSetting() {
+    auto v = Mod::get()->getSettingValue<std::string>("lstar-hud");
+    for (int m = 0; m < afw::lstar::MetricCount; m++) if (v == afw::lstar::metricName(m)) return m;
+    return -1;  // Off
+}
+
+std::string lstarSummary(bool markup) {
+    if (!g_lstar.ready) return g_lstar.computing ? "L*: calculating..." : "";
+    using namespace afw::lstar;
+    if (markup) {
+        return fmt::format("L*  Base <cy>{:.2f}</c>  Nerve <cy>{:.2f}</c>  Fatigue <cy>{:.2f}</c>  CPS <cy>{:.2f}</c>  All <cr>{:.2f}</c>",
+            g_lstar.out.final(Base), g_lstar.out.final(Nerve), g_lstar.out.final(Fatigue),
+            g_lstar.out.final(Cps), g_lstar.out.final(All));
+    }
+    return fmt::format("L* Base {:.2f} | Nerve {:.2f} | Fatigue {:.2f} | CPS {:.2f} | All {:.2f}",
+        g_lstar.out.final(Base), g_lstar.out.final(Nerve), g_lstar.out.final(Fatigue),
+        g_lstar.out.final(Cps), g_lstar.out.final(All));
+}
+
+void loadMarks(GJGameLevel* level) {
+    g_marks = readMarks(level);
+    startLStar();
+}
 
 void refreshHud() {
     if (!g_ov.hud) return;
@@ -357,11 +432,27 @@ void refreshNext(int frame) {
     g_ov.nextRow->setColor(kBucketColors[bucketOf(m.window)]);
 }
 
+// "L* All 412.3 / 1240.0": precision needed so far vs. for the whole level.
+void refreshLStarRow() {
+    if (!g_ov.lstarRow) return;
+    int m = lstarMetricSetting();
+    if (m < 0) return;
+    if (!g_lstar.ready) {
+        g_ov.lstarRow->setString(g_lstar.computing
+            ? fmt::format("L* {:.0f}%", g_lstarProgress.load() * 100.f).c_str() : "");
+        return;
+    }
+    auto const& s = g_lstar.out.series[m];
+    double now = (g_ov.passed > 0 && g_ov.passed <= (int)s.size()) ? s[g_ov.passed - 1] : 0.0;
+    g_ov.lstarRow->setString(fmt::format("L* {} {:.1f} / {:.1f}", afw::lstar::metricName(m), now, s.back()).c_str());
+}
+
 void removeHud() {
     if (g_ov.hud) g_ov.hud->removeFromParent();
     g_ov.hud = nullptr;
     for (auto& r : g_ov.rows) r = nullptr;
     g_ov.nextRow = nullptr;
+    g_ov.lstarRow = nullptr;
 }
 
 void buildOverlay(PlayLayer* pl) {
@@ -402,10 +493,20 @@ void buildOverlay(PlayLayer* pl) {
         hud->addChild(row);
         g_ov.nextRow = row;
     }
+    if (lstarMetricSetting() >= 0) {
+        auto row = CCLabelBMFont::create("", "bigFont.fnt");
+        row->setScale(0.3f);
+        row->setAnchorPoint({ 1.f, 1.f });
+        row->setPosition({ 0.f, y - 16.f });
+        row->setColor({ 200, 220, 255 });
+        hud->addChild(row);
+        g_ov.lstarRow = row;
+    }
     pl->addChild(hud, 9998);
     g_ov.hud = hud;
     refreshHud();
     refreshNext(0);
+    refreshLStarRow();
 }
 
 void spawnMarker(PlayLayer* pl, Mark const& m) {
@@ -452,12 +553,14 @@ void tickOverlay(PlayLayer* pl) {
     // Restart / respawn: recount everything up to the current frame.
     if (frame < g_ov.lastFrame) {
         g_ov.next = 0;
+        g_ov.passed = 0;
         for (auto& c : g_ov.counts) c = 0;
         while (g_ov.next < marks.size() && marks[g_ov.next].frame < frame) {
-            if (marks[g_ov.next].down) g_ov.counts[bucketOf(marks[g_ov.next].window)]++;
+            if (marks[g_ov.next].down) { g_ov.counts[bucketOf(marks[g_ov.next].window)]++; g_ov.passed++; }
             g_ov.next++;
         }
         refreshHud();
+        refreshLStarRow();
     }
     int prevFrame = g_ov.lastFrame;
     g_ov.lastFrame = frame;
@@ -468,10 +571,12 @@ void tickOverlay(PlayLayer* pl) {
         auto const& m = marks[g_ov.next++];
         if (!m.down) continue;
         g_ov.counts[bucketOf(m.window)]++;
+        g_ov.passed++;
         changed = true;
         if (showMarkers) spawnMarker(pl, m);
     }
-    if (changed) refreshHud();
+    if (changed) { refreshHud(); refreshLStarRow(); }
+    else if (g_lstar.computing && g_ov.lstarRow && (frame & 15) == 0) refreshLStarRow();
     if (frame != prevFrame) refreshNext(frame);
 }
 
@@ -583,7 +688,8 @@ void endRun(PlayLayer* pl, bool cancelled) {
     std::string body = fmt::format(
         "{} {} inputs in {} ({} attempts).\n"
         "1-frame inputs: <cr>{}</c>. Tightest: frame {} (window {}).\n\n"
-        "Markers + HUD are now on for this level. Also saved <cy>{}</c> for Frame Window Counter.",
+        "Markers, HUD and L* (Nerve / Fatigue / CPS) are now on for this level; see <cg>View results</c>. "
+        "Also saved <cy>{}</c> for Frame Window Counter.",
         cancelled ? "Stopped early. Measured" : "Measured",
         results.size(), fmtTime(elapsed), g_run.attempts,
         oneFrame, tight->ev.frame, tight->window(),
@@ -731,9 +837,10 @@ void showResultsList() {
 
     std::string md = fmt::format(
         "**{} clicks**: <cr>{} 1f</c> · <co>{} 2f</c> · <cy>{} 3f</c> · <cg>{} 4f+</c>\n\n"
+        "{}\n\n"
         "`+` = hit the test cap, could be bigger. Time is from level start at 240 TPS.\n\n"
         "| # | Frame | Time | Window | Early | Late |\n|---|---|---|---|---|---|\n",
-        total, counts[0], counts[1], counts[2], counts[3]);
+        total, counts[0], counts[1], counts[2], counts[3], lstarSummary(true));
     int n = 1;
     char const* tags[4] = { "<cr>", "<co>", "<cy>", "<cg>" };
     for (auto const& m : g_marks.marks) {
