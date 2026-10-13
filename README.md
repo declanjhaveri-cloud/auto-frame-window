@@ -6,7 +6,7 @@ Geode mod for Geometry Dash 2.2081 (Geode 5.10.1+). Measures the frame window of
 
 1. **Sync:** replays the macro untouched to learn how the bot counted frames (tries a few timings and picks the one that beats the level).
 2. **Measure:** for each click it shifts that one input 1, 2, 3… frames earlier until you'd die, then later. `window = 1 + early + late` frames.
-3. **Save:** writes `<level>_<time>.fwc` (import into Frame Window Counter) and a `.csv` to the mod's save folder.
+3. **Save:** stores results per level (click markers + top-right HUD show up next time you play it), plus `<level>_<time>.fwc` for Frame Window Counter and a `.csv` in the mod save folder.
 
 Each test replays from the level start at max speed (no rendering slowdown, 4 physics ticks per call). Long levels with lots of clicks take a while. The status bar shows an ETA.
 

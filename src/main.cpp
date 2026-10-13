@@ -21,6 +21,7 @@
 #include <filesystem>
 #include <fstream>
 #include <span>
+#include <sstream>
 
 #include "Measurer.hpp"
 
@@ -183,6 +184,215 @@ std::filesystem::path writeResults(std::vector<afw::Result> const& results) {
     return stem.string() + ".fwc";
 }
 
+
+// ---------------------------------------------------------------------------
+// Overlay: click markers + top-right HUD (uses saved results for the level)
+// ---------------------------------------------------------------------------
+
+struct Mark {
+    int frame = 0;
+    int window = 1;
+    bool p2 = false;
+    bool down = true;
+    bool capped = false;
+};
+
+struct LevelMarks {
+    bool loaded = false;
+    afw::Candidate cand;
+    std::vector<Mark> marks;   // sorted by frame
+};
+
+struct Overlay {
+    size_t next = 0;
+    int lastFrame = -1;
+    int counts[4] = {};
+    int totals[4] = {};
+    Ref<CCNode> hud;
+    CCLabelBMFont* rows[4] = {};
+};
+
+LevelMarks g_marks;
+Overlay g_ov;
+
+ccColor3B const kBucketColors[4] = {
+    { 255, 70, 70 },    // 1f
+    { 255, 160, 50 },   // 2f
+    { 255, 235, 70 },   // 3f
+    { 90, 235, 100 },   // 4f+
+};
+char const* const kBucketNames[4] = { "1f", "2f", "3f", "4f+" };
+
+int bucketOf(int window) { return std::clamp(window, 1, 4) - 1; }
+
+std::string levelKey(GJGameLevel* level) {
+    if (!level) return "unknown";
+    int id = level->m_levelID.value();
+    if (id > 0) return fmt::format("id_{}", id);
+    std::string name = level->m_levelName;
+    for (auto& c : name) if (!std::isalnum((unsigned char)c)) c = '_';
+    return "local_" + name;
+}
+
+std::filesystem::path levelFile(GJGameLevel* level) {
+    return Mod::get()->getSaveDir() / "levels" / (levelKey(level) + ".json");
+}
+
+void saveMarks(GJGameLevel* level, std::vector<afw::Result> const& results, afw::Candidate cand) {
+    std::vector<matjson::Value> arr;
+    for (auto const& r : results) {
+        arr.push_back(matjson::makeObject({
+            { "f", r.ev.frame },
+            { "w", r.window() },
+            { "p2", r.ev.p2 },
+            { "d", r.ev.down },
+            { "c", r.earlyCapped || r.lateCapped },
+        }));
+    }
+    auto root = matjson::makeObject({
+        { "source", cand.source == afw::FrameSource::LevelTime ? 1 : 0 },
+        { "offset", cand.offset },
+        { "marks", arr },
+    });
+    auto path = levelFile(level);
+    std::error_code ec;
+    std::filesystem::create_directories(path.parent_path(), ec);
+    std::ofstream f(path);
+    f << root.dump(2);
+}
+
+void loadMarks(GJGameLevel* level) {
+    g_marks = LevelMarks{};
+    std::ifstream f(levelFile(level));
+    if (!f) return;
+    std::stringstream ss;
+    ss << f.rdbuf();
+    auto res = matjson::parse(ss.str());
+    if (!res) return;
+    auto root = std::move(res).unwrap();
+    g_marks.cand.source = root["source"].asInt().unwrapOr(0) == 1 ? afw::FrameSource::LevelTime : afw::FrameSource::Progress;
+    g_marks.cand.offset = (int)root["offset"].asInt().unwrapOr(0);
+    if (root["marks"].isArray()) {
+        for (auto const& m : root["marks"]) {
+            Mark mk;
+            mk.frame = (int)m["f"].asInt().unwrapOr(0);
+            mk.window = (int)m["w"].asInt().unwrapOr(1);
+            mk.p2 = m["p2"].asBool().unwrapOr(false);
+            mk.down = m["d"].asBool().unwrapOr(true);
+            mk.capped = m["c"].asBool().unwrapOr(false);
+            g_marks.marks.push_back(mk);
+        }
+    }
+    std::stable_sort(g_marks.marks.begin(), g_marks.marks.end(), [](auto& a, auto& b) { return a.frame < b.frame; });
+    g_marks.loaded = !g_marks.marks.empty();
+}
+
+void refreshHud() {
+    if (!g_ov.hud) return;
+    g_ov.hud->setVisible(!g_run.active);
+    for (int b = 0; b < 4; b++) {
+        if (!g_ov.rows[b]) continue;
+        g_ov.rows[b]->setString(fmt::format("{}  {} / {}", kBucketNames[b], g_ov.counts[b], g_ov.totals[b]).c_str());
+    }
+}
+
+void removeHud() {
+    if (g_ov.hud) g_ov.hud->removeFromParent();
+    g_ov.hud = nullptr;
+    for (auto& r : g_ov.rows) r = nullptr;
+}
+
+void buildOverlay(PlayLayer* pl) {
+    removeHud();
+    g_ov = Overlay{};
+    if (!g_marks.loaded) return;
+
+    for (auto const& m : g_marks.marks) if (m.down) g_ov.totals[bucketOf(m.window)]++;
+
+    if (!Mod::get()->getSettingValue<bool>("show-hud")) return;
+
+    auto win = CCDirector::get()->getWinSize();
+    auto hud = CCNode::create();
+    hud->setID("hud"_spr);
+    hud->setPosition({ win.width - 6.f, win.height - 6.f });
+
+    auto title = CCLabelBMFont::create("Frame windows", "goldFont.fnt");
+    title->setScale(0.45f);
+    title->setAnchorPoint({ 1.f, 1.f });
+    hud->addChild(title);
+
+    float y = -16.f;
+    for (int b = 0; b < 4; b++) {
+        auto row = CCLabelBMFont::create("", "bigFont.fnt");
+        row->setScale(0.35f);
+        row->setAnchorPoint({ 1.f, 1.f });
+        row->setPosition({ 0.f, y });
+        row->setColor(kBucketColors[b]);
+        hud->addChild(row);
+        g_ov.rows[b] = row;
+        y -= 12.f;
+    }
+    pl->addChild(hud, 9998);
+    g_ov.hud = hud;
+    refreshHud();
+}
+
+void spawnMarker(PlayLayer* pl, Mark const& m) {
+    auto player = m.p2 ? pl->m_player2 : pl->m_player1;
+    if (!player || !player->getParent()) return;
+
+    auto color = kBucketColors[bucketOf(m.window)];
+    ccColor4F fill = { color.r / 255.f, color.g / 255.f, color.b / 255.f, 0.35f };
+    ccColor4F ring = { color.r / 255.f, color.g / 255.f, color.b / 255.f, 1.f };
+
+    auto node = CCNode::create();
+    node->setPosition(player->getPosition());
+
+    auto draw = CCDrawNode::create();
+    draw->drawCircle({ 0.f, 0.f }, 16.f, fill, 1.5f, ring, 32);
+    node->addChild(draw);
+
+    auto label = CCLabelBMFont::create(fmt::format("{}{}", m.window, m.capped ? "+" : "").c_str(), "bigFont.fnt");
+    label->setScale(0.45f);
+    label->setColor(color);
+    node->addChild(label);
+
+    node->setScale(0.6f);
+    node->runAction(CCEaseBackOut::create(CCScaleTo::create(0.15f, 1.f)));
+    node->runAction(CCSequence::create(CCDelayTime::create(1.0f), CCRemoveSelf::create(), nullptr));
+    player->getParent()->addChild(node, 10000);
+}
+
+// Called every tick during normal play.
+void tickOverlay(PlayLayer* pl) {
+    if (!g_marks.loaded || g_run.active) return;
+    int frame = frameOf(pl, g_marks.cand.source) + g_marks.cand.offset;
+    auto const& marks = g_marks.marks;
+
+    // Restart / respawn: recount everything up to the current frame.
+    if (frame < g_ov.lastFrame) {
+        g_ov.next = 0;
+        for (auto& c : g_ov.counts) c = 0;
+        while (g_ov.next < marks.size() && marks[g_ov.next].frame < frame) {
+            if (marks[g_ov.next].down) g_ov.counts[bucketOf(marks[g_ov.next].window)]++;
+            g_ov.next++;
+        }
+        refreshHud();
+    }
+    g_ov.lastFrame = frame;
+
+    bool changed = false;
+    bool showMarkers = Mod::get()->getSettingValue<bool>("show-markers");
+    while (g_ov.next < marks.size() && frame >= marks[g_ov.next].frame) {
+        auto const& m = marks[g_ov.next++];
+        if (!m.down) continue;
+        g_ov.counts[bucketOf(m.window)]++;
+        changed = true;
+        if (showMarkers) spawnMarker(pl, m);
+    }
+    if (changed) refreshHud();
+}
+
 // ---------------------------------------------------------------------------
 // Run control
 // ---------------------------------------------------------------------------
@@ -251,6 +461,7 @@ void endRun(PlayLayer* pl, bool cancelled) {
     releaseHeld(pl);
     g_run.active = false;
     removeLabel();
+    refreshHud();
 
     double elapsed = std::chrono::duration<double>(Clock::now() - g_run.start).count();
 
@@ -272,6 +483,9 @@ void endRun(PlayLayer* pl, bool cancelled) {
     }
 
     auto path = writeResults(results);
+    saveMarks(pl->m_level, results, g_meas.chosen());
+    loadMarks(pl->m_level);
+    buildOverlay(pl);
 
     auto tight = std::min_element(results.begin(), results.end(),
         [](auto const& a, auto const& b) { return a.window() < b.window(); });
@@ -280,7 +494,7 @@ void endRun(PlayLayer* pl, bool cancelled) {
     std::string body = fmt::format(
         "{} {} inputs in {} ({} attempts).\n"
         "1-frame inputs: <cr>{}</c>. Tightest: frame {} (window {}).\n\n"
-        "Import <cy>{}</c> in Frame Window Counter (press O, then Import).",
+        "Markers + HUD are now on for this level. Also saved <cy>{}</c> for Frame Window Counter.",
         cancelled ? "Stopped early. Measured" : "Measured",
         results.size(), fmtTime(elapsed), g_run.attempts,
         oneFrame, tight->ev.frame, tight->window(),
@@ -335,6 +549,7 @@ void startRun(Loaded const& macro) {
     g_run.levelName = pl->m_level ? std::string(pl->m_level->m_levelName) : "level";
 
     if (pl->m_isPracticeMode) pl->togglePracticeMode(false);
+    refreshHud();
     updateLabel(pl);
 }
 
@@ -391,7 +606,9 @@ class $modify(AFWBaseLayer, GJBaseGameLayer) {
         GJBaseGameLayer::processCommands(dt, isHalfTick, isLastTick);
 
         auto pl = PlayLayer::get();
-        if (!g_run.active || g_run.needReset || !pl || static_cast<GJBaseGameLayer*>(pl) != this) return;
+        if (!pl || static_cast<GJBaseGameLayer*>(pl) != this) return;
+        if (!g_run.active) { tickOverlay(pl); return; }
+        if (g_run.needReset) return;
         if (g_run.died || g_run.reachedEnd) return;
 
         auto const& sched = g_meas.attempt().schedule;
@@ -460,6 +677,14 @@ class $modify(AFWBaseLayer, GJBaseGameLayer) {
 };
 
 class $modify(AFWPlayLayer, PlayLayer) {
+    bool init(GJGameLevel* level, bool useReplay, bool dontCreateObjects) {
+        if (!PlayLayer::init(level, useReplay, dontCreateObjects)) return false;
+        g_ov = Overlay{};
+        loadMarks(level);
+        buildOverlay(this);
+        return true;
+    }
+
     void destroyPlayer(PlayerObject* player, GameObject* object) {
         if (!g_run.active) return PlayLayer::destroyPlayer(player, object);
         // GD "kills" the player with this at level start as an anticheat check.
@@ -503,6 +728,7 @@ class $modify(AFWPlayLayer, PlayLayer) {
             g_run.active = false;
             removeLabel();
         }
+        removeHud();
         PlayLayer::onQuit();
     }
 };

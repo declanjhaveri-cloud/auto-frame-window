@@ -69,13 +69,15 @@ jobs:
           name: auto_frame_window
           path: out
 
+      - uses: actions/checkout@v4
+
       - name: Read version
         id: ver
-        run: echo "tag=build-${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+        run: echo "tag=$(jq -r .version mod.json)" >> "$GITHUB_OUTPUT"
 
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.ver.outputs.tag }}
-          name: Auto Frame Window (build ${{ github.run_number }})
+          name: Auto Frame Window ${{ steps.ver.outputs.tag }}
           make_latest: true
           files: out/*.geode

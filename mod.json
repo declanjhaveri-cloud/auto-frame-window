@@ -4,7 +4,7 @@
     "win": "2.2081",
     "android": "2.2081"
   },
-  "version": "v0.1.0",
+  "version": "v0.1.1",
   "id": "declan.auto-frame-window",
   "name": "Auto Frame Window",
   "developer": "Declan",
@@ -54,6 +54,18 @@
       "default": 14,
       "min": 2,
       "max": 100
+    },
+    "show-markers": {
+      "type": "bool",
+      "name": "Show click markers",
+      "description": "Pop a colored circle with the frame window where each click happens (needs a measured level).",
+      "default": true
+    },
+    "show-hud": {
+      "type": "bool",
+      "name": "Show window HUD",
+      "description": "Top-right counter of 1f / 2f / 3f / 4f+ clicks so far (needs a measured level). Applies on next level load.",
+      "default": true
     }
   }
 }
