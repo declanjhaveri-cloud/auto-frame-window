@@ -4,15 +4,24 @@
     "win": "2.2081",
     "android": "2.2081"
   },
-  "version": "v1.0.2",
+  "version": "v1.1.0",
   "id": "declan.auto-frame-window",
   "name": "Auto Frame Window",
   "developer": "Declan",
   "description": "Measures every input's frame window automatically by replaying your bot macro.",
+  "repository": "https://github.com/declanjhaveri-cloud/auto-frame-window",
+  "links": {
+    "source": "https://github.com/declanjhaveri-cloud/auto-frame-window"
+  },
   "tags": [
     "utility",
     "gameplay"
   ],
+  "resources": {
+    "sprites": [
+      "resources/afw_icon.png"
+    ]
+  },
   "settings": {
     "max-shift": {
       "type": "int",
@@ -286,6 +295,12 @@
       "default": 0.2784421686721826,
       "min": 0.0,
       "max": 5.0
+    },
+    "check-updates": {
+      "type": "bool",
+      "name": "Check for updates",
+      "description": "On the main menu, check GitHub for a newer version and offer a one-click update.",
+      "default": true
     }
   }
 }

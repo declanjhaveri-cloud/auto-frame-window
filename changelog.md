@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.1.0
+- **New icon**: new mod logo (stacked red/orange/yellow/green timing bars on a hit line), and the pause-menu button uses the same bars instead of the "AFW" text.
+- **Update checker**: on the main menu, checks GitHub for a newer release. If there is one, it shows the version and changelog with an **Update** button that downloads it straight into `geode/mods`, then offers a restart. Turn off with *Check for updates*.
+- Prep for the official Geode index: logo, source link, repository info. Once it's on the index, Geode will update it automatically and the built-in checker will be removed (index rules).
+
 ## v1.0.2
 - Counter rows are now `window: count`, e.g. `1: 3`, `2: 7`. The count goes up live as you pass clicks with that window.
 

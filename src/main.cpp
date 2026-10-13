@@ -1195,8 +1195,7 @@ class $modify(AFWPauseLayer, PauseLayer) {
         auto menu = this->getChildByID("right-button-menu");
         if (!menu) return;
 
-        auto label = CCLabelBMFont::create("AFW", "bigFont.fnt");
-        auto spr = CircleButtonSprite::create(label, CircleBaseColor::Cyan, CircleBaseSize::Small);
+        auto spr = CircleButtonSprite::createWithSprite("afw_icon.png"_spr, 1.15f, CircleBaseColor::Cyan, CircleBaseSize::Small);
         auto btn = CCMenuItemSpriteExtra::create(spr, this, menu_selector(AFWPauseLayer::onAutoFrameWindow));
         btn->setID("start-button"_spr);
         menu->addChild(btn);
