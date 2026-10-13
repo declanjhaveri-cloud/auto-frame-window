@@ -66,3 +66,25 @@ jobs:
         with:
           name: auto_frame_window
           path: ${{ steps.build.outputs.build-output }}
+  release:
+    name: Publish release
+    runs-on: ubuntu-latest
+    needs: ['package']
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: auto_frame_window
+          path: out
+
+      - name: Read version
+        id: ver
+        run: echo "tag=build-${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: Auto Frame Window (build ${{ github.run_number }})
+          make_latest: true
+          files: out/*.geode
