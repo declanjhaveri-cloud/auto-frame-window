@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.0.0
+- **CBF precision (beta)**: measure windows to **1/2, 1/4 or 1/8 of a frame**. The shifted click fires partway through a physics tick, done by splitting the tick the way Click Between Frames does. Whole frames find the edge first, then it refines between the last good and first bad frame, so it's only somewhat slower. Off by default. *Beta: may desync on some gamemodes (slopes, moving platforms).* Fractional windows show everywhere: markers (`1.75`), HUD, results table, `.fwc`, `.csv` and L\*.
+- **Custom sound import**: pick your own `.ogg` / `.mp3` / `.wav` in settings. One sound per window size (1f / 2f / 3f / 4f+) plus a fallback for any click. Plays when you pass each measured click. Volume slider, optionally follows the game's SFX volume.
+- **Max window shown** (1 to 25): markers and sounds only appear for clicks with a window up to this. Set it to 16 and nothing above 16 shows. Counts and L\* still use every click.
+- The status bar shows fractional shifts while measuring in CBF mode.
+
 ## v0.3.1
 - **L\* precision** (NaNDL model) calculated from your measured windows, in the background on level load and after every measure:
   - **Base**: raw precision from window sizes.
@@ -34,6 +40,3 @@
 - Auto-syncs to how the bot counted frames.
 - Exports `.fwc` (Frame Window Counter) and `.csv`.
 - No attempts, jumps, progress or completions are saved while measuring. Pause to stop; finished clicks are kept.
-
-## Planned
-- **v1.0.0**: Click-between-frames (CBF) support, released as **beta**.

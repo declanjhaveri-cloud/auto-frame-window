@@ -4,7 +4,7 @@
     "win": "2.2081",
     "android": "2.2081"
   },
-  "version": "v0.3.1",
+  "version": "v1.0.0",
   "id": "declan.auto-frame-window",
   "name": "Auto Frame Window",
   "developer": "Declan",
@@ -55,6 +55,18 @@
       "min": 2,
       "max": 100
     },
+    "cbf-beta": {
+      "type": "string",
+      "name": "CBF precision (beta)",
+      "description": "BETA. Measures windows to a fraction of a frame by splitting the physics tick at the input, the way Click Between Frames does. Slower, and may desync on some gamemodes.",
+      "default": "Off",
+      "one-of": [
+        "Off",
+        "1/2 frame",
+        "1/4 frame",
+        "1/8 frame"
+      ]
+    },
     "show-markers": {
       "type": "bool",
       "name": "Show click markers",
@@ -78,6 +90,129 @@
       "name": "Marker detail",
       "description": "Show how many frames early / late each click can be under its marker, e.g. -1 +0.",
       "default": false
+    },
+    "max-shown-window": {
+      "type": "int",
+      "name": "Max window shown",
+      "description": "Only show markers and play sounds for clicks with a frame window up to this (1 to 25). E.g. 16 hides anything above 16.",
+      "default": 25,
+      "min": 1,
+      "max": 25
+    },
+    "sound-enabled": {
+      "type": "bool",
+      "name": "Click sounds",
+      "description": "Play your imported sound when you pass each measured click.",
+      "default": true
+    },
+    "sound-any": {
+      "type": "file",
+      "name": "Sound: any click",
+      "description": "Plays for every click that doesn't have its own sound below.",
+      "default": "",
+      "control": {
+        "dialog": "open",
+        "filters": [
+          {
+            "description": "Audio (*.ogg, *.mp3, *.wav)",
+            "files": [
+              "*.ogg",
+              "*.mp3",
+              "*.wav"
+            ]
+          }
+        ]
+      }
+    },
+    "sound-1f": {
+      "type": "file",
+      "name": "Sound: 1f clicks",
+      "description": "Plays on 1-frame clicks.",
+      "default": "",
+      "control": {
+        "dialog": "open",
+        "filters": [
+          {
+            "description": "Audio (*.ogg, *.mp3, *.wav)",
+            "files": [
+              "*.ogg",
+              "*.mp3",
+              "*.wav"
+            ]
+          }
+        ]
+      }
+    },
+    "sound-2f": {
+      "type": "file",
+      "name": "Sound: 2f clicks",
+      "description": "Plays on 2-frame clicks.",
+      "default": "",
+      "control": {
+        "dialog": "open",
+        "filters": [
+          {
+            "description": "Audio (*.ogg, *.mp3, *.wav)",
+            "files": [
+              "*.ogg",
+              "*.mp3",
+              "*.wav"
+            ]
+          }
+        ]
+      }
+    },
+    "sound-3f": {
+      "type": "file",
+      "name": "Sound: 3f clicks",
+      "description": "Plays on 3-frame clicks.",
+      "default": "",
+      "control": {
+        "dialog": "open",
+        "filters": [
+          {
+            "description": "Audio (*.ogg, *.mp3, *.wav)",
+            "files": [
+              "*.ogg",
+              "*.mp3",
+              "*.wav"
+            ]
+          }
+        ]
+      }
+    },
+    "sound-4f": {
+      "type": "file",
+      "name": "Sound: 4f+ clicks",
+      "description": "Plays on clicks with a window of 4 frames or more.",
+      "default": "",
+      "control": {
+        "dialog": "open",
+        "filters": [
+          {
+            "description": "Audio (*.ogg, *.mp3, *.wav)",
+            "files": [
+              "*.ogg",
+              "*.mp3",
+              "*.wav"
+            ]
+          }
+        ]
+      }
+    },
+    "sound-volume": {
+      "type": "float",
+      "name": "Sound volume",
+      "description": "Volume of click sounds.",
+      "default": 1.0,
+      "min": 0.0,
+      "max": 1.0
+    },
+    "sound-follow-sfx": {
+      "type": "bool",
+      "name": "Follow game SFX volume",
+      "description": "Scale click sounds by the game's SFX volume slider.",
+      "default": true
     },
     "section-start": {
       "type": "int",

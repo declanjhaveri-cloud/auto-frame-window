@@ -75,9 +75,16 @@ jobs:
         id: ver
         run: echo "tag=$(jq -r .version mod.json)" >> "$GITHUB_OUTPUT"
 
+      - name: Release notes from changelog
+        run: |
+          TAG="${{ steps.ver.outputs.tag }}"
+          awk -v h="## $TAG" '/^## /{if(f)exit} $0==h{f=1;next} f' changelog.md > notes.md
+          cat notes.md
+
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.ver.outputs.tag }}
           name: Auto Frame Window ${{ steps.ver.outputs.tag }}
           make_latest: true
           files: out/*.geode
+          body_path: notes.md

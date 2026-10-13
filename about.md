@@ -16,3 +16,7 @@ No attempts, jumps or progress are saved to your level while it runs.
 The AFW menu also has **Re-measure** (same macro again), **View results** (table of every click) and **Clear results**. Use *Section start / end %* in settings to measure a long level in chunks.
 
 **L\*** (Base / Nerve / Fatigue / CPS / All) is calculated from the measured windows and shown in the HUD and results.
+
+**Sounds:** import your own click sounds (per window size) in settings.
+**Max window shown:** hide markers/sounds above a window (1 to 25).
+**CBF precision (beta):** measure to 1/2, 1/4 or 1/8 of a frame.

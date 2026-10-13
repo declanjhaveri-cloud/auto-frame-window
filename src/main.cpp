@@ -12,6 +12,8 @@
 #include <Geode/utils/async.hpp>
 #include <Geode/ui/MDPopup.hpp>
 #include <Geode/ui/GeodeUI.hpp>
+#include <Geode/utils/string.hpp>
+#include <Geode/fmod/fmod.hpp>
 
 #include <gdr/gdr.hpp>
 #include <gdr_convert.hpp>
@@ -62,6 +64,7 @@ struct Run {
     int deathFrame = 0;
     size_t next = 0;
     bool held[2][4] = {};     // [player2][button]
+    struct Split { bool armed = false; int button = 1; bool down = true; bool p2 = false; double frac = 0; } split;
     int attempts = 0;
     int lastFrame = -1;
     int stuckTicks = 0;
@@ -201,9 +204,9 @@ std::filesystem::path writeResults(std::vector<afw::Result> const& results) {
 
 struct Mark {
     int frame = 0;
-    int window = 1;
-    int early = 0;
-    int late = 0;
+    double window = 1;
+    double early = 0;
+    double late = 0;
     bool p2 = false;
     bool down = true;
     bool capped = false;
@@ -240,7 +243,15 @@ ccColor3B const kBucketColors[4] = {
 };
 char const* const kBucketNames[4] = { "1f", "2f", "3f", "4f+" };
 
-int bucketOf(int window) { return std::clamp(window, 1, 4) - 1; }
+int bucketOf(double window) { return std::clamp((int)std::floor(window + 1e-9), 1, 4) - 1; }
+
+// 2 -> "2", 1.25 -> "1.25", 1.5 -> "1.5"
+std::string fmtW(double v) {
+    auto s = fmt::format("{:.3f}", v);
+    while (!s.empty() && s.back() == '0') s.pop_back();
+    if (!s.empty() && s.back() == '.') s.pop_back();
+    return s;
+}
 
 std::string levelKey(GJGameLevel* level) {
     if (!level) return "unknown";
@@ -272,9 +283,9 @@ LevelMarks readMarks(GJGameLevel* level) {
         for (auto const& m : root["marks"]) {
             Mark mk;
             mk.frame = (int)m["f"].asInt().unwrapOr(0);
-            mk.window = (int)m["w"].asInt().unwrapOr(1);
-            mk.early = (int)m["e"].asInt().unwrapOr(0);
-            mk.late = (int)m["l"].asInt().unwrapOr(0);
+            mk.window = m["w"].asDouble().unwrapOr(1.0);
+            mk.early = m["e"].asDouble().unwrapOr(0.0);
+            mk.late = m["l"].asDouble().unwrapOr(0.0);
             mk.p2 = m["p2"].asBool().unwrapOr(false);
             mk.down = m["d"].asBool().unwrapOr(true);
             mk.capped = m["c"].asBool().unwrapOr(false);
@@ -427,7 +438,7 @@ void refreshNext(int frame) {
         return;
     }
     auto const& m = marks[i];
-    g_ov.nextRow->setString(fmt::format("Next {}f{} in {}", m.window, m.capped ? "+" : "",
+    g_ov.nextRow->setString(fmt::format("Next {}f{} in {}", fmtW(m.window), m.capped ? "+" : "",
         std::max(0, m.frame - frame)).c_str());
     g_ov.nextRow->setColor(kBucketColors[bucketOf(m.window)]);
 }
@@ -509,6 +520,52 @@ void buildOverlay(PlayLayer* pl) {
     refreshLStarRow();
 }
 
+// ---------------------------------------------------------------------------
+// Custom click sounds (one per window bucket, picked in settings)
+// ---------------------------------------------------------------------------
+
+std::unordered_map<std::string, FMOD::Sound*> g_soundCache;
+FMOD::ChannelGroup* g_sfxGroup = nullptr;
+
+void playSoundFile(std::filesystem::path const& path) {
+    if (path.empty()) return;
+    auto engine = FMODAudioEngine::sharedEngine();
+    if (!engine || !engine->m_system) return;
+    auto sys = engine->m_system;
+    if (!g_sfxGroup && sys->createChannelGroup("afw-sfx", &g_sfxGroup) != FMOD_OK) return;
+
+    float vol = (float)Mod::get()->getSettingValue<double>("sound-volume");
+    if (Mod::get()->getSettingValue<bool>("sound-follow-sfx")) vol *= engine->m_sfxVolume;
+    if (vol <= 0.f) return;
+    g_sfxGroup->setVolume(vol);
+
+    auto key = utils::string::pathToString(path);
+    FMOD::Sound* sound = nullptr;
+    if (auto it = g_soundCache.find(key); it != g_soundCache.end()) sound = it->second;
+    else {
+        std::error_code ec;
+        if (!std::filesystem::exists(path, ec)) return;
+        if (sys->createSound(key.c_str(), FMOD_DEFAULT | FMOD_LOOP_OFF | FMOD_CREATESAMPLE, nullptr, &sound) != FMOD_OK || !sound) return;
+        g_soundCache[key] = sound;
+    }
+    FMOD::Channel* ch = nullptr;
+    sys->playSound(sound, g_sfxGroup, false, &ch);
+}
+
+void playClickSound(Mark const& m) {
+    if (!Mod::get()->getSettingValue<bool>("sound-enabled")) return;
+    static char const* keys[4] = { "sound-1f", "sound-2f", "sound-3f", "sound-4f" };
+    auto path = Mod::get()->getSettingValue<std::filesystem::path>(keys[bucketOf(m.window)]);
+    if (path.empty()) path = Mod::get()->getSettingValue<std::filesystem::path>("sound-any");
+    playSoundFile(path);
+}
+
+// Hide markers/sounds for clicks with a window above this (1 to 25).
+bool shownWindow(Mark const& m) {
+    auto maxShown = (double)Mod::get()->getSettingValue<int64_t>("max-shown-window");
+    return m.window <= maxShown + 1e-9;
+}
+
 void spawnMarker(PlayLayer* pl, Mark const& m) {
     auto player = m.p2 ? pl->m_player2 : pl->m_player1;
     if (!player || !player->getParent()) return;
@@ -524,14 +581,14 @@ void spawnMarker(PlayLayer* pl, Mark const& m) {
     draw->drawCircle({ 0.f, 0.f }, 16.f, fill, 1.5f, ring, 32);
     node->addChild(draw);
 
-    auto label = CCLabelBMFont::create(fmt::format("{}{}", m.window, m.capped ? "+" : "").c_str(), "bigFont.fnt");
+    auto label = CCLabelBMFont::create(fmt::format("{}{}", fmtW(m.window), m.capped ? "+" : "").c_str(), "bigFont.fnt");
     label->setScale(0.45f);
     label->setColor(color);
     node->addChild(label);
 
     // Early / late split under the circle, e.g. "-1 +0".
     if (Mod::get()->getSettingValue<bool>("marker-detail")) {
-        auto detail = CCLabelBMFont::create(fmt::format("-{} +{}", m.early, m.late).c_str(), "bigFont.fnt");
+        auto detail = CCLabelBMFont::create(fmt::format("-{} +{}", fmtW(m.early), fmtW(m.late)).c_str(), "bigFont.fnt");
         detail->setScale(0.25f);
         detail->setPosition({ 0.f, -22.f });
         detail->setColor(color);
@@ -573,7 +630,10 @@ void tickOverlay(PlayLayer* pl) {
         g_ov.counts[bucketOf(m.window)]++;
         g_ov.passed++;
         changed = true;
-        if (showMarkers) spawnMarker(pl, m);
+        if (shownWindow(m)) {
+            if (showMarkers) spawnMarker(pl, m);
+            playClickSound(m);
+        }
     }
     if (changed) { refreshHud(); refreshLStarRow(); }
     else if (g_lstar.computing && g_ov.lstarRow && (frame & 15) == 0) refreshLStarRow();
@@ -621,9 +681,9 @@ void updateLabel(PlayLayer* pl) {
         int total = g_meas.targetCount();
         std::string eta = "--";
         if (done > 0) eta = fmtTime(elapsed / done * (total - done));
-        int shift = g_meas.currentShift();
+        double shift = g_meas.currentShift();
         text = fmt::format("Input {}/{}  shift {}{}  |  {} elapsed  |  ~{} left\nPause to stop (keeps finished inputs)",
-            std::min(done + 1, total), total, shift > 0 ? "+" : "", shift, fmtTime(elapsed), eta);
+            std::min(done + 1, total), total, shift > 0 ? "+" : "", fmtW(shift), fmtTime(elapsed), eta);
     }
     g_label->setString(text.c_str());
 }
@@ -683,7 +743,7 @@ void endRun(PlayLayer* pl, bool cancelled) {
 
     auto tight = std::min_element(results.begin(), results.end(),
         [](auto const& a, auto const& b) { return a.window() < b.window(); });
-    int oneFrame = (int)std::count_if(results.begin(), results.end(), [](auto const& r) { return r.window() == 1; });
+    int oneFrame = (int)std::count_if(results.begin(), results.end(), [](auto const& r) { return r.window() < 1.0 + 1e-9; });
 
     std::string body = fmt::format(
         "{} {} inputs in {} ({} attempts).\n"
@@ -692,7 +752,7 @@ void endRun(PlayLayer* pl, bool cancelled) {
         "Also saved <cy>{}</c> for Frame Window Counter.",
         cancelled ? "Stopped early. Measured" : "Measured",
         results.size(), fmtTime(elapsed), g_run.attempts,
-        oneFrame, tight->ev.frame, tight->window(),
+        oneFrame, tight->ev.frame, fmtW(tight->window()),
         path.filename().string());
     showResultPopup(cancelled ? "Stopped" : "Done", body, path);
 }
@@ -719,6 +779,7 @@ void beginAttempt(PlayLayer* pl) {
     g_run.needReset = false;
     g_run.lastFrame = -1;
     g_run.stuckTicks = 0;
+    g_run.split = {};
 }
 
 void startRun(Loaded const& macro) {
@@ -733,6 +794,10 @@ void startRun(Loaded const& macro) {
     s.autoSource = src == "Auto";
     s.forcedSource = src == "Level time" ? afw::FrameSource::LevelTime : afw::FrameSource::Progress;
     s.preferLevelTime = lower(macro.botName).find("xdbot") != std::string::npos;
+    {
+        auto cbf = Mod::get()->getSettingValue<std::string>("cbf-beta");
+        s.subdiv = cbf == "1/2 frame" ? 2 : cbf == "1/4 frame" ? 4 : cbf == "1/8 frame" ? 8 : 1;
+    }
 
     // Same macro as last time on this level: try the known sync first (usually 1 run).
     if (g_marks.hasCand && g_marks.macroPath == macro.path) s.preferred = g_marks.cand;
@@ -847,7 +912,7 @@ void showResultsList() {
         if (!m.down) continue;
         md += fmt::format("| {}{} | {} | {:.2f}s | {}{}{}</c> | {} | {} |\n",
             n++, m.p2 ? " (P2)" : "", m.frame, m.frame / 240.0,
-            tags[bucketOf(m.window)], m.window, m.capped ? "+" : "", m.early, m.late);
+            tags[bucketOf(m.window)], fmtW(m.window), m.capped ? "+" : "", fmtW(m.early), fmtW(m.late));
     }
     std::string title = pl && pl->m_level ? std::string(pl->m_level->m_levelName) : "Results";
     MDPopup::create(title, md, "OK")->show();
@@ -932,6 +997,11 @@ class $modify(AFWBaseLayer, GJBaseGameLayer) {
         int frame = macroFrame(pl);
         while (g_run.next < sched.size() && frame >= sched[g_run.next].frame) {
             auto const& ev = sched[g_run.next++];
+            if (ev.frac > 1e-9) {
+                // CBF beta: fire partway through this tick's player update.
+                g_run.split = { true, ev.button, ev.down, ev.p2, ev.frac };
+                continue;
+            }
             g_run.injecting = true;
             GJBaseGameLayer::handleButton(ev.down, ev.button, !ev.p2);
             g_run.injecting = false;
@@ -1051,6 +1121,31 @@ class $modify(AFWPlayLayer, PlayLayer) {
 };
 
 class $modify(AFWPlayerObject, PlayerObject) {
+    // CBF beta: run the tick in two parts with the input in between, like Click Between Frames.
+    void update(float dt) {
+        auto pl = PlayLayer::get();
+        if (!g_run.active || !g_run.split.armed || !pl) return PlayerObject::update(dt);
+        auto target = g_run.split.p2 ? pl->m_player2 : pl->m_player1;
+        if (this != target) return PlayerObject::update(dt);
+
+        auto sp = g_run.split;
+        g_run.split.armed = false;
+        float first = dt * (float)sp.frac;
+        bool startedOnGround = m_isOnGround;
+
+        PlayerObject::update(first);
+        if ((m_yVelocity < 0) ^ m_isUpsideDown) m_isOnGround = startedOnGround;
+        if (!m_isOnSlope || m_isDart) pl->checkCollisions(this, 0.f, true);
+        else pl->checkCollisions(this, dt, true);
+
+        g_run.injecting = true;
+        pl->handleButton(sp.down, sp.button, !sp.p2);
+        g_run.injecting = false;
+        if (sp.button >= 1 && sp.button <= 3) g_run.held[sp.p2 ? 1 : 0][sp.button] = sp.down;
+
+        PlayerObject::update(dt - first);
+    }
+
     void incrementJumps() {
         if (g_run.active) return;
         PlayerObject::incrementJumps();
