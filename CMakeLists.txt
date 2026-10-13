@@ -29,6 +29,12 @@ file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS "src/*.cpp" "src/*.hpp")
 add_library(${PROJECT_NAME} SHARED ${SOURCES})
 setup_geode_mod(${PROJECT_NAME})
 
+# GitHub build has the in-game update checker; the Geode index build turns it off.
+option(AFW_SELF_UPDATE "Include the GitHub update checker" ON)
+if(AFW_SELF_UPDATE)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE AFW_SELF_UPDATE=1)
+endif()
+
 # GDR replay format + converter for older .gdr / .gdr.json (same versions Frame Window Counter uses)
 CPMAddPackage("gh:maxnut/GDReplayFormat#2a0ca3c")
 CPMAddPackage(

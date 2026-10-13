@@ -1,7 +1,13 @@
 # Changelog
 
+## v1.2.1
+- **Two versions now**:
+  - **GitHub version** (Releases page): keeps the in-game **update checker** with one-click updates.
+  - **Geode index version**: no update checker, because Geode updates it automatically.
+- Both are built from the same code on every update. The index build is published as a separate `-index` pre-release on GitHub, which is the link used for the Geode index.
+
 ## v1.2.0
-- **Geode index release.** Removed the built-in GitHub update checker; once the mod is on the Geode index, Geode updates it automatically like any other mod.
+- Geode index prep: tried removing the update checker (brought back for the GitHub version in v1.2.1).
 
 ## v1.1.0
 - **New icon**: new mod logo (stacked red/orange/yellow/green timing bars on a hit line), and the pause-menu button uses the same bars instead of the "AFW" text.

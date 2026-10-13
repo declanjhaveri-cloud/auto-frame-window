@@ -4,7 +4,7 @@
     "win": "2.2081",
     "android": "2.2081"
   },
-  "version": "v1.2.0",
+  "version": "v1.2.1",
   "id": "declan.auto-frame-window",
   "name": "Auto Frame Window",
   "developer": "Declan",
@@ -295,6 +295,12 @@
       "default": 0.2784421686721826,
       "min": 0.0,
       "max": 5.0
+    },
+    "check-updates": {
+      "type": "bool",
+      "name": "Check for updates",
+      "description": "GitHub version only: on the main menu, check GitHub for a newer version and offer a one-click update. (The Geode index version is updated by Geode instead.)",
+      "default": true
     }
   }
 }
