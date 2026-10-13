@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.2.0
+- **Geode index release.** Removed the built-in GitHub update checker; once the mod is on the Geode index, Geode updates it automatically like any other mod.
+
 ## v1.1.0
 - **New icon**: new mod logo (stacked red/orange/yellow/green timing bars on a hit line), and the pause-menu button uses the same bars instead of the "AFW" text.
 - **Update checker**: on the main menu, checks GitHub for a newer release. If there is one, it shows the version and changelog with an **Update** button that downloads it straight into `geode/mods`, then offers a restart. Turn off with *Check for updates*.
