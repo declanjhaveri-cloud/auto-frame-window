@@ -10,6 +10,8 @@
 #include <Geode/modify/GameStatsManager.hpp>
 #include <Geode/utils/file.hpp>
 #include <Geode/utils/async.hpp>
+#include <Geode/ui/MDPopup.hpp>
+#include <Geode/ui/GeodeUI.hpp>
 
 #include <gdr/gdr.hpp>
 #include <gdr_convert.hpp>
@@ -44,6 +46,7 @@ struct Loaded {
     double fps = 240.0;
     std::string botName;
     std::string fileName;
+    std::string path;
     bool scaled = false;
 };
 
@@ -64,6 +67,9 @@ struct Run {
     double fps = 240.0;
     std::string fileName;
     std::string levelName;
+    std::string macroPath;
+    int rangeMin = 0;
+    int rangeMax = INT_MAX;
 };
 
 afw::Measurer g_meas;
@@ -119,6 +125,7 @@ Result<Loaded> loadMacro(std::filesystem::path const& path) {
     out.fps = replay->framerate > 0 ? replay->framerate : 240.0;
     out.botName = replay->botInfo.name;
     out.fileName = path.filename().string();
+    out.path = path.string();
     double scale = 240.0 / out.fps;
     out.scaled = std::abs(out.fps - 240.0) > 0.5;
 
@@ -192,6 +199,8 @@ std::filesystem::path writeResults(std::vector<afw::Result> const& results) {
 struct Mark {
     int frame = 0;
     int window = 1;
+    int early = 0;
+    int late = 0;
     bool p2 = false;
     bool down = true;
     bool capped = false;
@@ -199,7 +208,9 @@ struct Mark {
 
 struct LevelMarks {
     bool loaded = false;
+    bool hasCand = false;
     afw::Candidate cand;
+    std::string macroPath;     // last macro used on this level
     std::vector<Mark> marks;   // sorted by frame
 };
 
@@ -210,6 +221,7 @@ struct Overlay {
     int totals[4] = {};
     Ref<CCNode> hud;
     CCLabelBMFont* rows[4] = {};
+    CCLabelBMFont* nextRow = nullptr;
 };
 
 LevelMarks g_marks;
@@ -238,20 +250,49 @@ std::filesystem::path levelFile(GJGameLevel* level) {
     return Mod::get()->getSaveDir() / "levels" / (levelKey(level) + ".json");
 }
 
-void saveMarks(GJGameLevel* level, std::vector<afw::Result> const& results, afw::Candidate cand) {
+LevelMarks readMarks(GJGameLevel* level) {
+    LevelMarks out;
+    std::ifstream f(levelFile(level));
+    if (!f) return out;
+    std::stringstream ss;
+    ss << f.rdbuf();
+    auto res = matjson::parse(ss.str());
+    if (!res) return out;
+    auto root = std::move(res).unwrap();
+    out.hasCand = root.contains("source");
+    out.cand.source = root["source"].asInt().unwrapOr(0) == 1 ? afw::FrameSource::LevelTime : afw::FrameSource::Progress;
+    out.cand.offset = (int)root["offset"].asInt().unwrapOr(0);
+    out.macroPath = root["macro"].asString().unwrapOr("");
+    if (root["marks"].isArray()) {
+        for (auto const& m : root["marks"]) {
+            Mark mk;
+            mk.frame = (int)m["f"].asInt().unwrapOr(0);
+            mk.window = (int)m["w"].asInt().unwrapOr(1);
+            mk.early = (int)m["e"].asInt().unwrapOr(0);
+            mk.late = (int)m["l"].asInt().unwrapOr(0);
+            mk.p2 = m["p2"].asBool().unwrapOr(false);
+            mk.down = m["d"].asBool().unwrapOr(true);
+            mk.capped = m["c"].asBool().unwrapOr(false);
+            out.marks.push_back(mk);
+        }
+    }
+    std::stable_sort(out.marks.begin(), out.marks.end(), [](auto& a, auto& b) { return a.frame < b.frame; });
+    out.loaded = !out.marks.empty();
+    return out;
+}
+
+void writeMarks(GJGameLevel* level, LevelMarks const& lm) {
     std::vector<matjson::Value> arr;
-    for (auto const& r : results) {
+    for (auto const& m : lm.marks) {
         arr.push_back(matjson::makeObject({
-            { "f", r.ev.frame },
-            { "w", r.window() },
-            { "p2", r.ev.p2 },
-            { "d", r.ev.down },
-            { "c", r.earlyCapped || r.lateCapped },
+            { "f", m.frame }, { "w", m.window }, { "e", m.early }, { "l", m.late },
+            { "p2", m.p2 }, { "d", m.down }, { "c", m.capped },
         }));
     }
     auto root = matjson::makeObject({
-        { "source", cand.source == afw::FrameSource::LevelTime ? 1 : 0 },
-        { "offset", cand.offset },
+        { "source", lm.cand.source == afw::FrameSource::LevelTime ? 1 : 0 },
+        { "offset", lm.cand.offset },
+        { "macro", lm.macroPath },
         { "marks", arr },
     });
     auto path = levelFile(level);
@@ -261,31 +302,34 @@ void saveMarks(GJGameLevel* level, std::vector<afw::Result> const& results, afw:
     f << root.dump(2);
 }
 
-void loadMarks(GJGameLevel* level) {
-    g_marks = LevelMarks{};
-    std::ifstream f(levelFile(level));
-    if (!f) return;
-    std::stringstream ss;
-    ss << f.rdbuf();
-    auto res = matjson::parse(ss.str());
-    if (!res) return;
-    auto root = std::move(res).unwrap();
-    g_marks.cand.source = root["source"].asInt().unwrapOr(0) == 1 ? afw::FrameSource::LevelTime : afw::FrameSource::Progress;
-    g_marks.cand.offset = (int)root["offset"].asInt().unwrapOr(0);
-    if (root["marks"].isArray()) {
-        for (auto const& m : root["marks"]) {
-            Mark mk;
-            mk.frame = (int)m["f"].asInt().unwrapOr(0);
-            mk.window = (int)m["w"].asInt().unwrapOr(1);
-            mk.p2 = m["p2"].asBool().unwrapOr(false);
-            mk.down = m["d"].asBool().unwrapOr(true);
-            mk.capped = m["c"].asBool().unwrapOr(false);
-            g_marks.marks.push_back(mk);
-        }
+// Merge new results into what's saved: inputs inside the measured frame range are
+// replaced, everything else is kept (so a level can be measured in sections).
+void saveMarks(GJGameLevel* level, std::vector<afw::Result> const& results, afw::Candidate cand,
+    std::string const& macroPath, int rangeMin, int rangeMax) {
+    LevelMarks lm = readMarks(level);
+    // A different sync means old frames may not line up; start fresh.
+    if (lm.hasCand && (lm.cand.source != cand.source || lm.cand.offset != cand.offset)) lm.marks.clear();
+    if (!lm.macroPath.empty() && lm.macroPath != macroPath) lm.marks.clear();
+    std::erase_if(lm.marks, [&](Mark const& m) { return m.frame >= rangeMin && m.frame <= rangeMax; });
+    for (auto const& r : results) {
+        Mark m;
+        m.frame = r.ev.frame;
+        m.window = r.window();
+        m.early = r.early;
+        m.late = r.late;
+        m.p2 = r.ev.p2;
+        m.down = r.ev.down;
+        m.capped = r.earlyCapped || r.lateCapped;
+        lm.marks.push_back(m);
     }
-    std::stable_sort(g_marks.marks.begin(), g_marks.marks.end(), [](auto& a, auto& b) { return a.frame < b.frame; });
-    g_marks.loaded = !g_marks.marks.empty();
+    std::stable_sort(lm.marks.begin(), lm.marks.end(), [](auto& a, auto& b) { return a.frame < b.frame; });
+    lm.cand = cand;
+    lm.hasCand = true;
+    lm.macroPath = macroPath;
+    writeMarks(level, lm);
 }
+
+void loadMarks(GJGameLevel* level) { g_marks = readMarks(level); }
 
 void refreshHud() {
     if (!g_ov.hud) return;
@@ -296,10 +340,28 @@ void refreshHud() {
     }
 }
 
+// "Next 1f in 12" line: the upcoming click and how many frames away it is.
+void refreshNext(int frame) {
+    if (!g_ov.nextRow) return;
+    auto const& marks = g_marks.marks;
+    size_t i = g_ov.next;
+    while (i < marks.size() && !marks[i].down) i++;
+    if (i >= marks.size()) {
+        g_ov.nextRow->setString("Next: -");
+        g_ov.nextRow->setColor({ 200, 200, 200 });
+        return;
+    }
+    auto const& m = marks[i];
+    g_ov.nextRow->setString(fmt::format("Next {}f{} in {}", m.window, m.capped ? "+" : "",
+        std::max(0, m.frame - frame)).c_str());
+    g_ov.nextRow->setColor(kBucketColors[bucketOf(m.window)]);
+}
+
 void removeHud() {
     if (g_ov.hud) g_ov.hud->removeFromParent();
     g_ov.hud = nullptr;
     for (auto& r : g_ov.rows) r = nullptr;
+    g_ov.nextRow = nullptr;
 }
 
 void buildOverlay(PlayLayer* pl) {
@@ -332,9 +394,18 @@ void buildOverlay(PlayLayer* pl) {
         g_ov.rows[b] = row;
         y -= 12.f;
     }
+    if (Mod::get()->getSettingValue<bool>("show-next")) {
+        auto row = CCLabelBMFont::create("", "bigFont.fnt");
+        row->setScale(0.35f);
+        row->setAnchorPoint({ 1.f, 1.f });
+        row->setPosition({ 0.f, y - 3.f });
+        hud->addChild(row);
+        g_ov.nextRow = row;
+    }
     pl->addChild(hud, 9998);
     g_ov.hud = hud;
     refreshHud();
+    refreshNext(0);
 }
 
 void spawnMarker(PlayLayer* pl, Mark const& m) {
@@ -356,6 +427,15 @@ void spawnMarker(PlayLayer* pl, Mark const& m) {
     label->setScale(0.45f);
     label->setColor(color);
     node->addChild(label);
+
+    // Early / late split under the circle, e.g. "-1 +0".
+    if (Mod::get()->getSettingValue<bool>("marker-detail")) {
+        auto detail = CCLabelBMFont::create(fmt::format("-{} +{}", m.early, m.late).c_str(), "bigFont.fnt");
+        detail->setScale(0.25f);
+        detail->setPosition({ 0.f, -22.f });
+        detail->setColor(color);
+        node->addChild(detail);
+    }
 
     node->setScale(0.6f);
     node->runAction(CCEaseBackOut::create(CCScaleTo::create(0.15f, 1.f)));
@@ -379,6 +459,7 @@ void tickOverlay(PlayLayer* pl) {
         }
         refreshHud();
     }
+    int prevFrame = g_ov.lastFrame;
     g_ov.lastFrame = frame;
 
     bool changed = false;
@@ -391,6 +472,7 @@ void tickOverlay(PlayLayer* pl) {
         if (showMarkers) spawnMarker(pl, m);
     }
     if (changed) refreshHud();
+    if (frame != prevFrame) refreshNext(frame);
 }
 
 // ---------------------------------------------------------------------------
@@ -478,12 +560,19 @@ void endRun(PlayLayer* pl, bool cancelled) {
 
     auto results = cancelled ? g_meas.completedResults() : g_meas.results();
     if (results.empty()) {
-        showResultPopup("Stopped", "No inputs were finished, nothing saved.", std::nullopt);
+        showResultPopup("Stopped", cancelled ? "No inputs were finished, nothing saved."
+            : "No clicks in the chosen section. Check Section start / end in settings.", std::nullopt);
         return;
     }
 
     auto path = writeResults(results);
-    saveMarks(pl->m_level, results, g_meas.chosen());
+    // If stopped early, only replace old results up to the last input that finished.
+    int rangeMax = g_run.rangeMax;
+    if (cancelled) {
+        rangeMax = 0;
+        for (auto const& r : results) rangeMax = std::max(rangeMax, r.ev.frame);
+    }
+    saveMarks(pl->m_level, results, g_meas.chosen(), g_run.macroPath, g_run.rangeMin, rangeMax);
     loadMarks(pl->m_level);
     buildOverlay(pl);
 
@@ -539,6 +628,18 @@ void startRun(Loaded const& macro) {
     s.forcedSource = src == "Level time" ? afw::FrameSource::LevelTime : afw::FrameSource::Progress;
     s.preferLevelTime = lower(macro.botName).find("xdbot") != std::string::npos;
 
+    // Same macro as last time on this level: try the known sync first (usually 1 run).
+    if (g_marks.hasCand && g_marks.macroPath == macro.path) s.preferred = g_marks.cand;
+
+    // Section: percentages of the macro's length.
+    int lastFrame = 0;
+    for (auto const& e : macro.events) lastFrame = std::max(lastFrame, e.frame);
+    int startPct = (int)Mod::get()->getSettingValue<int64_t>("section-start");
+    int endPct = (int)Mod::get()->getSettingValue<int64_t>("section-end");
+    if (endPct < startPct) std::swap(startPct, endPct);
+    s.minFrame = startPct <= 0 ? 0 : (int)((int64_t)lastFrame * startPct / 100);
+    s.maxFrame = endPct >= 100 ? INT_MAX : (int)(((int64_t)lastFrame * endPct + 99) / 100);
+
     g_meas.init(macro.events, s);
     g_run = Run{};
     g_run.active = true;
@@ -546,11 +647,45 @@ void startRun(Loaded const& macro) {
     g_run.start = Clock::now();
     g_run.fps = macro.fps;
     g_run.fileName = macro.fileName;
+    g_run.macroPath = macro.path;
+    g_run.rangeMin = s.minFrame;
+    g_run.rangeMax = s.maxFrame;
     g_run.levelName = pl->m_level ? std::string(pl->m_level->m_levelName) : "level";
 
     if (pl->m_isPracticeMode) pl->togglePracticeMode(false);
     refreshHud();
     updateLabel(pl);
+}
+
+void closePauseMenu() {
+    auto scene = CCDirector::get()->getRunningScene();
+    if (auto pause = scene ? scene->getChildByType<PauseLayer>(0) : nullptr) {
+        pause->onResume(nullptr);
+    }
+}
+
+void confirmAndStart(Loaded macro) {
+    int presses = (int)std::count_if(macro.events.begin(), macro.events.end(), [](auto& e) { return e.down; });
+    bool rel = Mod::get()->getSettingValue<bool>("measure-releases");
+    int startPct = (int)Mod::get()->getSettingValue<int64_t>("section-start");
+    int endPct = (int)Mod::get()->getSettingValue<int64_t>("section-end");
+    if (endPct < startPct) std::swap(startPct, endPct);
+    std::string section = (startPct <= 0 && endPct >= 100) ? "the whole macro"
+        : fmt::format("<cy>{}% to {}%</c> of the macro (merged into saved results)", startPct, endPct);
+
+    std::string body = fmt::format(
+        "<cy>{}</c>: {} presses, {} inputs total{}.\n\n"
+        "Measures {} on {}. Don't touch anything; pause to stop early.{}",
+        macro.fileName, presses, macro.events.size(),
+        macro.botName.empty() ? "" : fmt::format(" ({})", macro.botName),
+        rel ? "presses and releases" : "presses", section,
+        macro.scaled ? fmt::format("\n<cr>Macro is {} TPS, converted to 240. Results may be off.</c>", macro.fps) : "");
+
+    createQuickPopup("Auto Frame Window", body, "Cancel", "Start", 380.f, [macro](FLAlertLayer*, bool start) {
+        if (!start || !PlayLayer::get()) return;
+        closePauseMenu();
+        startRun(macro);
+    });
 }
 
 void pickAndStart() {
@@ -561,38 +696,113 @@ void pickAndStart() {
         if (!res.isOk()) return;
         auto opt = res.unwrap();
         if (!opt) return;
-
         auto loaded = loadMacro(*opt);
         if (loaded.isErr()) {
             FLAlertLayer::create("Can't load macro", gd::string(loaded.unwrapErr()), "OK")->show();
             return;
         }
-        auto macro = std::move(loaded).unwrap();
-        int presses = (int)std::count_if(macro.events.begin(), macro.events.end(), [](auto& e) { return e.down; });
-        bool rel = Mod::get()->getSettingValue<bool>("measure-releases");
-
-        std::string body = fmt::format(
-            "<cy>{}</c>: {} presses, {} inputs total{}.\n\n"
-            "This replays the level many times at max speed and will measure {} inputs. "
-            "Don't touch anything; pause to stop early.{}",
-            macro.fileName, presses, macro.events.size(),
-            macro.botName.empty() ? "" : fmt::format(" ({})", macro.botName),
-            rel ? (int)macro.events.size() : presses,
-            macro.scaled ? fmt::format("\n<cr>Macro is {} TPS, converted to 240. Results may be off.</c>", macro.fps) : "");
-
-        createQuickPopup("Auto Frame Window", body, "Cancel", "Start", 380.f, [macro](FLAlertLayer*, bool start) {
-            if (!start) return;
-            auto pl = PlayLayer::get();
-            if (!pl) return;
-            // Close the pause menu and go.
-            auto scene = CCDirector::get()->getRunningScene();
-            if (auto pause = scene ? scene->getChildByType<PauseLayer>(0) : nullptr) {
-                pause->onResume(nullptr);
-            }
-            startRun(macro);
-        });
+        confirmAndStart(std::move(loaded).unwrap());
     });
 }
+
+void remeasure() {
+    if (g_marks.macroPath.empty()) {
+        FLAlertLayer::create("Re-measure", "No macro remembered for this level yet. Use <cg>Measure</c> first.", "OK")->show();
+        return;
+    }
+    auto loaded = loadMacro(g_marks.macroPath);
+    if (loaded.isErr()) {
+        FLAlertLayer::create("Can't load macro",
+            gd::string(fmt::format("{}\n\n{}", g_marks.macroPath, loaded.unwrapErr())), "OK")->show();
+        return;
+    }
+    confirmAndStart(std::move(loaded).unwrap());
+}
+
+void showResultsList() {
+    auto pl = PlayLayer::get();
+    if (!g_marks.loaded) {
+        FLAlertLayer::create("Results", "This level hasn't been measured yet.", "OK")->show();
+        return;
+    }
+    int counts[4] = {};
+    int total = 0;
+    for (auto const& m : g_marks.marks) if (m.down) { counts[bucketOf(m.window)]++; total++; }
+
+    std::string md = fmt::format(
+        "**{} clicks**: <cr>{} 1f</c> · <co>{} 2f</c> · <cy>{} 3f</c> · <cg>{} 4f+</c>\n\n"
+        "`+` = hit the test cap, could be bigger. Time is from level start at 240 TPS.\n\n"
+        "| # | Frame | Time | Window | Early | Late |\n|---|---|---|---|---|---|\n",
+        total, counts[0], counts[1], counts[2], counts[3]);
+    int n = 1;
+    char const* tags[4] = { "<cr>", "<co>", "<cy>", "<cg>" };
+    for (auto const& m : g_marks.marks) {
+        if (!m.down) continue;
+        md += fmt::format("| {}{} | {} | {:.2f}s | {}{}{}</c> | {} | {} |\n",
+            n++, m.p2 ? " (P2)" : "", m.frame, m.frame / 240.0,
+            tags[bucketOf(m.window)], m.window, m.capped ? "+" : "", m.early, m.late);
+    }
+    std::string title = pl && pl->m_level ? std::string(pl->m_level->m_levelName) : "Results";
+    MDPopup::create(title, md, "OK")->show();
+}
+
+void clearResults() {
+    createQuickPopup("Clear results", "Delete the saved frame windows for this level?", "Cancel", "Delete",
+        [](FLAlertLayer*, bool yes) {
+            if (!yes) return;
+            auto pl = PlayLayer::get();
+            if (!pl) return;
+            std::error_code ec;
+            std::filesystem::remove(levelFile(pl->m_level), ec);
+            loadMarks(pl->m_level);
+            buildOverlay(pl);
+        });
+}
+
+// Menu opened from the AFW pause button.
+class AFWMenu : public geode::Popup {
+protected:
+    bool init() {
+        if (!Popup::init(260.f, 230.f)) return false;
+        this->setTitle("Auto Frame Window");
+
+        auto menu = CCMenu::create();
+        menu->setContentSize({ 220.f, 180.f });
+        menu->setLayout(ColumnLayout::create()->setGap(6.f)->setAxisReverse(true)->setAxisAlignment(AxisAlignment::Center));
+
+        auto add = [&](char const* text, SEL_MenuHandler sel, bool enabled = true) {
+            auto spr = ButtonSprite::create(text, 180, 180, 0.7f, true, "bigFont.fnt", enabled ? "GJ_button_01.png" : "GJ_button_04.png");
+            auto btn = CCMenuItemSpriteExtra::create(spr, this, sel);
+            menu->addChild(btn);
+        };
+        add("Measure", menu_selector(AFWMenu::onMeasure));
+        add("Re-measure", menu_selector(AFWMenu::onRemeasure), !g_marks.macroPath.empty());
+        add("View results", menu_selector(AFWMenu::onView), g_marks.loaded);
+        add("Clear results", menu_selector(AFWMenu::onClear), g_marks.loaded);
+        add("Settings", menu_selector(AFWMenu::onSettings));
+        menu->updateLayout();
+
+        m_mainLayer->addChildAtPosition(menu, Anchor::Center, { 0.f, -12.f });
+        return true;
+    }
+
+    void onMeasure(CCObject*) { this->onClose(nullptr); pickAndStart(); }
+    void onRemeasure(CCObject*) { this->onClose(nullptr); remeasure(); }
+    void onView(CCObject*) { showResultsList(); }
+    void onClear(CCObject*) { this->onClose(nullptr); clearResults(); }
+    void onSettings(CCObject*) { openSettingsPopup(Mod::get()); }
+
+public:
+    static AFWMenu* create() {
+        auto ret = new AFWMenu();
+        if (ret->init()) {
+            ret->autorelease();
+            return ret;
+        }
+        delete ret;
+        return nullptr;
+    }
+};
 
 } // namespace
 
@@ -762,6 +972,6 @@ class $modify(AFWPauseLayer, PauseLayer) {
     }
 
     void onAutoFrameWindow(CCObject*) {
-        pickAndStart();
+        if (auto menu = AFWMenu::create()) menu->show();
     }
 };

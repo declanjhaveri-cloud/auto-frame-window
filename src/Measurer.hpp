@@ -38,6 +38,9 @@ struct Settings {
     bool autoSource = true;
     FrameSource forcedSource = FrameSource::Progress;
     bool preferLevelTime = false;  // xdBot macros count frames from level time
+    std::optional<Candidate> preferred;  // known-good sync from a previous run, tried first
+    int minFrame = 0;              // only measure inputs in [minFrame, maxFrame]
+    int maxFrame = INT_MAX;
     int calibrationTail = 5 * 240; // frames past last input that count as "made it"
 };
 
@@ -69,6 +72,7 @@ public:
 
         m_targets.clear();
         for (int i = 0; i < (int)m_events.size(); i++) {
+            if (m_events[i].frame < s.minFrame || m_events[i].frame > s.maxFrame) continue;
             if (m_events[i].down || s.measureReleases) m_targets.push_back(i);
         }
 
@@ -77,8 +81,12 @@ public:
         if (s.autoSource && s.preferLevelTime) sources = { FrameSource::LevelTime, FrameSource::Progress };
         else if (s.autoSource) sources = { FrameSource::Progress, FrameSource::LevelTime };
         else sources = { s.forcedSource };
+        if (s.preferred) m_candidates.push_back(*s.preferred);
         for (int off : { 0, -1, 1, -2, 2 }) {
-            for (auto src : sources) m_candidates.push_back({ src, off });
+            for (auto src : sources) {
+                if (s.preferred && s.preferred->source == src && s.preferred->offset == off) continue;
+                m_candidates.push_back({ src, off });
+            }
         }
 
         m_results.clear();

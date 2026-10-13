@@ -4,7 +4,7 @@
     "win": "2.2081",
     "android": "2.2081"
   },
-  "version": "v0.1.1",
+  "version": "v0.2.0",
   "id": "declan.auto-frame-window",
   "name": "Auto Frame Window",
   "developer": "Declan",
@@ -66,6 +66,34 @@
       "name": "Show window HUD",
       "description": "Top-right counter of 1f / 2f / 3f / 4f+ clicks so far (needs a measured level). Applies on next level load.",
       "default": true
+    },
+    "show-next": {
+      "type": "bool",
+      "name": "Show next click",
+      "description": "Adds a line to the HUD with the next click's window and how many frames away it is.",
+      "default": true
+    },
+    "marker-detail": {
+      "type": "bool",
+      "name": "Marker detail",
+      "description": "Show how many frames early / late each click can be under its marker, e.g. -1 +0.",
+      "default": false
+    },
+    "section-start": {
+      "type": "int",
+      "name": "Section start %",
+      "description": "Only measure clicks from this % of the macro onward. Results merge with what's already saved, so long levels can be done in chunks.",
+      "default": 0,
+      "min": 0,
+      "max": 100
+    },
+    "section-end": {
+      "type": "int",
+      "name": "Section end %",
+      "description": "Only measure clicks up to this % of the macro.",
+      "default": 100,
+      "min": 0,
+      "max": 100
     }
   }
 }
