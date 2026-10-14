@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.2.4
+- Developer name changed to **Logout22w** to match the GD / Geode account.
+
 ## v1.2.3
 - **Credits**: added **NaN GD** for the L\* precision model (NaNDL), covering Base / Nerve / Fatigue / CPS, the default K constants and the 24-hour target.
 

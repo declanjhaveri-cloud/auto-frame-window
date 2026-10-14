@@ -4,10 +4,10 @@
     "win": "2.2081",
     "android": "2.2081"
   },
-  "version": "v1.2.3",
+  "version": "v1.2.4",
   "id": "declan.auto-frame-window",
   "name": "Auto Frame Window",
-  "developer": "Declan",
+  "developer": "Logout22w",
   "description": "Measures every input's frame window automatically by replaying your bot macro.",
   "repository": "https://github.com/declanjhaveri-cloud/auto-frame-window",
   "links": {
