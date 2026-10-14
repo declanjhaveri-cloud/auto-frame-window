@@ -2,8 +2,10 @@
 
 ## v1.3.1
 - **CBF (alpha) now measures in tenths of a frame.** Windows read like `2.6`, `0.1` or `10.6`. The 1/2, 1/4 and 1/8 step options are gone.
-- All windows show **one decimal at most** everywhere (markers, HUD, results table, csv). Whole numbers stay plain, e.g. `2`.
+- Decimal windows show **one decimal at most** (markers, results table). Whole numbers stay plain, e.g. `2`.
 - The AFW menu toggle reads **CBF (alpha): On / Off**.
+- **Counter rows are now ranges**: `0-1`, `1-2`, `2-3` … instead of single numbers, e.g. `2-3: 4`. A row holds windows from its first number up to (not including) the next, so `2` and `2.6` both count in `2-3`. With *Max window shown* at 16, rows run `0-1` through `15-16`; a window of exactly 16 counts in the last row, and nothing above 16 shows. `0-1` only fills up with CBF windows under 1 frame.
+- Only the **circle markers** show the decimal window (e.g. `2.6`). The counter and the *Next* line show the range (e.g. `Next 2-3 in 12`). The results table still lists exact values.
 
 ## v1.3.0
 - **CBF on/off toggle in the AFW menu.** Tap **CBF (alpha)** to switch it on or off. It turns green with the step size (e.g. `CBF (alpha): 1/4`) when on, gray when off.
@@ -87,3 +89,6 @@ Fixes from the Geode index guidelines:
 - Auto-syncs to how the bot counted frames.
 - Exports `.fwc` (Frame Window Counter) and `.csv`.
 - No attempts, jumps, progress or completions are saved while measuring. Pause to stop; finished clicks are kept.
+
+## Planned
+- **CBF hundredths** (e.g. `2.65`): test mid-week and keep refining until it works, then ship it as an update (also to the Geode index if the mod is approved).

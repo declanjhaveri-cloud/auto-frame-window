@@ -244,11 +244,16 @@ ccColor3B const kBucketColors[4] = {
 };
 int maxShownSetting() { return (int)std::clamp<int64_t>(Mod::get()->getSettingValue<int64_t>("max-shown-window"), 1, 25); }
 
-// HUD row for a window (1..max), or -1 if it's above the max and should be hidden.
+// HUD row for a window: row k is "k-(k+1)" and holds windows from k up to (not incl.) k+1,
+// so 2 and 2.6 both go in "2-3". Rows run 0-1 .. (max-1)-max; a window of exactly max
+// counts in the last row. Returns -1 if the window is above max (hidden).
 int rowOf(double window, int maxRow) {
-    int k = std::max(1, (int)std::floor(window + 1e-9));
-    return k > maxRow ? -1 : k - 1;
+    if (window > maxRow + 1e-9) return -1;
+    int k = std::max(0, (int)std::floor(window + 1e-9));
+    return std::min(k, maxRow - 1);
 }
+
+std::string rowLabel(int k) { return fmt::format("{}-{}", k, k + 1); }
 
 // Red (tight) -> orange -> yellow -> green (loose). 1, 2, 3, 4+ keep the classic colors.
 ccColor3B colorForWindow(double window) {
@@ -437,7 +442,7 @@ void refreshHud() {
     g_ov.hud->setVisible(!g_run.active);
     for (size_t k = 0; k < g_ov.rows.size(); k++) {
         if (!g_ov.rows[k]) continue;
-        g_ov.rows[k]->setString(fmt::format("{}: {}", k + 1, g_ov.counts[k]).c_str());
+        g_ov.rows[k]->setString(fmt::format("{}: {}", rowLabel((int)k), g_ov.counts[k]).c_str());
     }
 }
 
@@ -453,7 +458,7 @@ void refreshNext(int frame) {
         return;
     }
     auto const& m = marks[i];
-    g_ov.nextRow->setString(fmt::format("Next {}{} in {}", fmtW(m.window), m.capped ? "+" : "",
+    g_ov.nextRow->setString(fmt::format("Next {}{} in {}", rowLabel((int)std::floor(m.window + 1e-9)), m.capped ? "+" : "",
         std::max(0, m.frame - frame)).c_str());
     g_ov.nextRow->setColor(colorForWindow(m.window));
 }
@@ -517,7 +522,7 @@ void buildOverlay(PlayLayer* pl) {
         row->setScale(scale);
         row->setAnchorPoint({ 1.f, 1.f });
         row->setPosition({ 0.f, y });
-        row->setColor(colorForWindow(k + 1));
+        row->setColor(colorForWindow(k));
         hud->addChild(row);
         g_ov.rows[k] = row;
         y -= spacing;

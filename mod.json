@@ -79,7 +79,7 @@
     "show-hud": {
       "type": "bool",
       "name": "Show window HUD",
-      "description": "Top-right counter with one row per frame window (1 up to Max window shown), clicks passed / total. Applies on next level load.",
+      "description": "Top-right counter: one row per range (0-1, 1-2, 2-3 ...) up to Max window shown, with how many clicks in that range you've passed. Applies on next level load.",
       "default": true
     },
     "show-next": {
@@ -97,7 +97,7 @@
     "max-shown-window": {
       "type": "int",
       "name": "Max window shown",
-      "description": "Highest frame window shown (1 to 25). The top-right counter gets one row per window from 1 up to this, and markers, sounds and the Next line skip clicks above it. Applies on next level load for the counter.",
+      "description": "Highest frame window shown (1 to 25). The top-right counter shows ranges 0-1, 1-2 ... up to this, and markers, sounds and the Next line skip clicks above it. Applies on next level load for the counter.",
       "default": 10,
       "min": 1,
       "max": 25
