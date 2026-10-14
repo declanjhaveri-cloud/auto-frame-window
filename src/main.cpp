@@ -260,11 +260,11 @@ ccColor3B colorForWindow(double window) {
 
 int bucketOf(double window) { return std::clamp((int)std::floor(window + 1e-9), 1, 4) - 1; }
 
-// 2 -> "2", 1.25 -> "1.25", 1.5 -> "1.5"
+// One decimal at most: 2 -> "2", 2.6 -> "2.6", 10.6 -> "10.6", 0.1 -> "0.1"
 std::string fmtW(double v) {
-    auto s = fmt::format("{:.3f}", v);
-    while (!s.empty() && s.back() == '0') s.pop_back();
-    if (!s.empty() && s.back() == '.') s.pop_back();
+    auto s = fmt::format("{:.1f}", v);
+    if (s.size() > 2 && s.ends_with(".0")) s.resize(s.size() - 2);
+    if (s == "-0") s = "0";
     return s;
 }
 
@@ -826,9 +826,8 @@ void startRun(Loaded const& macro) {
     s.forcedSource = src == "Level time" ? afw::FrameSource::LevelTime : afw::FrameSource::Progress;
     s.preferLevelTime = lower(macro.botName).find("xdbot") != std::string::npos;
     {
-        auto cbf = Mod::get()->getSettingValue<std::string>("cbf-precision");
-        bool on = Mod::get()->getSettingValue<bool>("cbf-enabled");
-        s.subdiv = !on ? 1 : cbf == "1/2 frame" ? 2 : cbf == "1/8 frame" ? 8 : 4;
+        // CBF (alpha) measures in tenths of a frame.
+        s.subdiv = Mod::get()->getSettingValue<bool>("cbf-enabled") ? 10 : 1;
     }
 
     // Same macro as last time on this level: try the known sync first (usually 1 run).
@@ -1010,9 +1009,7 @@ protected:
     ButtonSprite* m_cbfSpr = nullptr;
 
     static std::string cbfLabel(bool on) {
-        if (!on) return "CBF (alpha): Off";
-        auto p = Mod::get()->getSettingValue<std::string>("cbf-precision");
-        return fmt::format("CBF (alpha): {}", p == "1/2 frame" ? "1/2" : p == "1/8 frame" ? "1/8" : "1/4");
+        return on ? "CBF (alpha): On" : "CBF (alpha): Off";
     }
 
     void onToggleCbf(CCObject*) {

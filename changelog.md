@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.3.1
+- **CBF (alpha) now measures in tenths of a frame.** Windows read like `2.6`, `0.1` or `10.6`. The 1/2, 1/4 and 1/8 step options are gone.
+- All windows show **one decimal at most** everywhere (markers, HUD, results table, csv). Whole numbers stay plain, e.g. `2`.
+- The AFW menu toggle reads **CBF (alpha): On / Off**.
+
 ## v1.3.0
 - **CBF on/off toggle in the AFW menu.** Tap **CBF (alpha)** to switch it on or off. It turns green with the step size (e.g. `CBF (alpha): 1/4`) when on, gray when off.
 - **CBF is now labeled alpha** instead of beta: it's experimental, and results may be off on some gamemodes.

@@ -19,7 +19,7 @@ The AFW menu also has **Re-measure** (same macro again), **View results** (table
 
 **Sounds:** import your own click sounds (per window size) in settings.
 **Max window shown:** counter rows go 1 up to this (max 25); clicks above it are hidden everywhere.
-**CBF precision (alpha):** toggle it in the AFW menu to measure to 1/2, 1/4 or 1/8 of a frame. Experimental.
+**CBF precision (alpha):** toggle it in the AFW menu to measure windows to a tenth of a frame (e.g. 2.6). Experimental.
 
 ## Credits
 - The **L\* precision model** (Base / Nerve / Fatigue / CPS and the default constants) and the 24-hour target are from **NaN GD**'s [NaNDL](https://nandl.pages.dev/).
