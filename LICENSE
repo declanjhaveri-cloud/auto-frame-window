@@ -12,6 +12,9 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 ---------------------------------------------------------------------------
 Third-party notices
 
+The L* precision model (Base / Nerve / Fatigue / CPS, default K constants and
+24-hour target) is NaN GD's NaNDL model (https://nandl.pages.dev/).
+
 Parts of src/LStar.hpp are ported from Frame Window Counter
 (https://github.com/hyper-5/frame-window-counter):
   MIT License, Copyright (c) 2026 hyper-5

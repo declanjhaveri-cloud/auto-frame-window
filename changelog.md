@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.2.3
+- **Credits**: added **NaN GD** for the L\* precision model (NaNDL), covering Base / Nerve / Fatigue / CPS, the default K constants and the 24-hour target.
+
 ## v1.2.2
 Fixes from the Geode index guidelines:
 - **Credits** added to the mod description and LICENSE: Frame Window Counter (C0nscious / hyper-5) for the L\* math and `.fwc` format, Click Between Frames (syzzi) for the CBF tick-splitting idea, and maxnut's GDR libraries. Required for mods based on others' work.
