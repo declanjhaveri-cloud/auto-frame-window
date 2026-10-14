@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.3.0
+- **CBF on/off toggle in the AFW menu.** Tap **CBF (alpha)** to switch it on or off. It turns green with the step size (e.g. `CBF (alpha): 1/4`) when on, gray when off.
+- **CBF is now labeled alpha** instead of beta: it's experimental, and results may be off on some gamemodes.
+- CBF settings are now split into **CBF precision (alpha)** (on/off) and **CBF step (alpha)** (1/2, 1/4 or 1/8 frame, default 1/4). If you had CBF set before, turn it back on with the toggle.
+
 ## v1.2.4
 - Developer name changed to **Logout22w** to match the GD / Geode account.
 

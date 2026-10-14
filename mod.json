@@ -4,7 +4,7 @@
     "win": "2.2081",
     "android": "2.2081"
   },
-  "version": "v1.2.4",
+  "version": "v1.3.0",
   "id": "declan.auto-frame-window",
   "name": "Auto Frame Window",
   "developer": "Logout22w",
@@ -64,13 +64,18 @@
       "min": 2,
       "max": 100
     },
-    "cbf-beta": {
+    "cbf-enabled": {
+      "type": "bool",
+      "name": "CBF precision (alpha)",
+      "description": "ALPHA, experimental. Measures windows to a fraction of a frame by splitting the physics tick at the input, the way Click Between Frames does. Results may be off, especially on slopes or moving platforms. Also toggled from the AFW menu.",
+      "default": false
+    },
+    "cbf-precision": {
       "type": "string",
-      "name": "CBF precision (beta)",
-      "description": "BETA. Measures windows to a fraction of a frame by splitting the physics tick at the input, the way Click Between Frames does. Slower, and may desync on some gamemodes.",
-      "default": "Off",
+      "name": "CBF step (alpha)",
+      "description": "How fine CBF measures when it's on.",
+      "default": "1/4 frame",
       "one-of": [
-        "Off",
         "1/2 frame",
         "1/4 frame",
         "1/8 frame"

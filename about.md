@@ -19,10 +19,10 @@ The AFW menu also has **Re-measure** (same macro again), **View results** (table
 
 **Sounds:** import your own click sounds (per window size) in settings.
 **Max window shown:** counter rows go 1 up to this (max 25); clicks above it are hidden everywhere.
-**CBF precision (beta):** measure to 1/2, 1/4 or 1/8 of a frame.
+**CBF precision (alpha):** toggle it in the AFW menu to measure to 1/2, 1/4 or 1/8 of a frame. Experimental.
 
 ## Credits
 - The **L\* precision model** (Base / Nerve / Fatigue / CPS and the default constants) and the 24-hour target are from **NaN GD**'s [NaNDL](https://nandl.pages.dev/).
 - **L\* precision math** and the **.fwc** file format come from [Frame Window Counter](https://github.com/hyper-5/frame-window-counter) by **C0nscious / hyper-5** (MIT license). The L\* calculation is a port of its calculator.
-- The **CBF precision (beta)** tick-splitting approach is based on [Click Between Frames](https://github.com/theyareonit/Click-Between-Frames) by **syzzi** (MIT license).
+- The **CBF precision (alpha)** tick-splitting approach is based on [Click Between Frames](https://github.com/theyareonit/Click-Between-Frames) by **syzzi** (MIT license).
 - Macro reading uses [GDReplayFormat](https://github.com/maxnut/GDReplayFormat) and [GDR-converter](https://github.com/maxnut/GDR-converter) by **maxnut**.

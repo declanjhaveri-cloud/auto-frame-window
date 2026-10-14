@@ -826,8 +826,9 @@ void startRun(Loaded const& macro) {
     s.forcedSource = src == "Level time" ? afw::FrameSource::LevelTime : afw::FrameSource::Progress;
     s.preferLevelTime = lower(macro.botName).find("xdbot") != std::string::npos;
     {
-        auto cbf = Mod::get()->getSettingValue<std::string>("cbf-beta");
-        s.subdiv = cbf == "1/2 frame" ? 2 : cbf == "1/4 frame" ? 4 : cbf == "1/8 frame" ? 8 : 1;
+        auto cbf = Mod::get()->getSettingValue<std::string>("cbf-precision");
+        bool on = Mod::get()->getSettingValue<bool>("cbf-enabled");
+        s.subdiv = !on ? 1 : cbf == "1/2 frame" ? 2 : cbf == "1/8 frame" ? 8 : 4;
     }
 
     // Same macro as last time on this level: try the known sync first (usually 1 run).
@@ -966,13 +967,13 @@ void clearResults() {
 class AFWMenu : public geode::Popup {
 protected:
     bool init() {
-        if (!Popup::init(260.f, 230.f)) return false;
+        if (!Popup::init(260.f, 262.f)) return false;
         this->setTitle("Auto Frame Window");
 
         this->setID("menu"_spr);
         auto menu = CCMenu::create();
         menu->setID("menu-buttons"_spr);
-        menu->setContentSize({ 220.f, 180.f });
+        menu->setContentSize({ 220.f, 212.f });
         menu->setLayout(ColumnLayout::create()->setGap(6.f)->setAxisReverse(true)->setAxisAlignment(AxisAlignment::Center));
 
         auto add = [&](char const* text, SEL_MenuHandler sel, bool enabled = true) {
@@ -984,6 +985,15 @@ protected:
         add("Re-measure", menu_selector(AFWMenu::onRemeasure), !g_marks.macroPath.empty());
         add("View results", menu_selector(AFWMenu::onView), g_marks.loaded);
         add("Clear results", menu_selector(AFWMenu::onClear), g_marks.loaded);
+        // CBF on/off toggle (alpha). Green = on, gray = off.
+        {
+            bool on = Mod::get()->getSettingValue<bool>("cbf-enabled");
+            m_cbfSpr = ButtonSprite::create(cbfLabel(on).c_str(), 180, 180, 0.6f, true, "bigFont.fnt",
+                on ? "GJ_button_02.png" : "GJ_button_04.png");
+            auto btn = CCMenuItemSpriteExtra::create(m_cbfSpr, this, menu_selector(AFWMenu::onToggleCbf));
+            btn->setID("cbf-toggle"_spr);
+            menu->addChild(btn);
+        }
         add("Settings", menu_selector(AFWMenu::onSettings));
         menu->updateLayout();
 
@@ -996,6 +1006,23 @@ protected:
     void onView(CCObject*) { showResultsList(); }
     void onClear(CCObject*) { this->onClose(nullptr); clearResults(); }
     void onSettings(CCObject*) { openSettingsPopup(Mod::get()); }
+
+    ButtonSprite* m_cbfSpr = nullptr;
+
+    static std::string cbfLabel(bool on) {
+        if (!on) return "CBF (alpha): Off";
+        auto p = Mod::get()->getSettingValue<std::string>("cbf-precision");
+        return fmt::format("CBF (alpha): {}", p == "1/2 frame" ? "1/2" : p == "1/8 frame" ? "1/8" : "1/4");
+    }
+
+    void onToggleCbf(CCObject*) {
+        bool on = !Mod::get()->getSettingValue<bool>("cbf-enabled");
+        Mod::get()->setSettingValue<bool>("cbf-enabled", on);
+        if (m_cbfSpr) {
+            m_cbfSpr->setString(cbfLabel(on).c_str());
+            m_cbfSpr->updateBGImage(on ? "GJ_button_02.png" : "GJ_button_04.png");
+        }
+    }
 
 public:
     static AFWMenu* create() {
