@@ -82,16 +82,18 @@ afw::Measurer g_meas;
 Run g_run;
 Ref<CCLabelBMFont> g_label;
 
-int frameOf(PlayLayer* pl, afw::FrameSource src) {
+bool isBypass(double tps) { return std::abs(tps - 240.0) > 0.5; }
+
+int frameOf(PlayLayer* pl, afw::FrameSource src, double tps = 240.0) {
     if (src == afw::FrameSource::LevelTime) {
-        return static_cast<int>(pl->m_gameState.m_levelTime * 240.0) + 1;
+        return static_cast<int>(pl->m_gameState.m_levelTime * tps) + 1;
     }
     return static_cast<int>(pl->m_gameState.m_currentProgress);
 }
 
 int macroFrame(PlayLayer* pl) {
     auto c = g_meas.attempt().cand;
-    return frameOf(pl, c.source) + c.offset;
+    return frameOf(pl, c.source, g_run.fps) + c.offset;
 }
 
 std::string lower(std::string s) {
@@ -132,12 +134,11 @@ Result<Loaded> loadMacro(std::filesystem::path const& path) {
     out.botName = replay->botInfo.name;
     out.fileName = path.filename().string();
     out.path = path.string();
-    double scale = 240.0 / out.fps;
-    out.scaled = std::abs(out.fps - 240.0) > 0.5;
+    out.scaled = isBypass(out.fps);  // replayed at its own TPS (physics bypass), not converted
 
     for (auto const& in : replay->inputs) {
         afw::Event e;
-        e.frame = static_cast<int>(out.scaled ? std::llround(in.frame * scale) : (long long)in.frame);
+        e.frame = static_cast<int>(in.frame);
         e.button = in.button == 0 ? 1 : in.button;
         e.p2 = in.player2;
         e.down = in.down;
@@ -167,7 +168,7 @@ std::filesystem::path writeResults(std::vector<afw::Result> const& results) {
     {
         std::ofstream f(stem.string() + ".fwc", std::ios::binary);
         f.write("FWC2", 4);
-        double fps = 240.0;
+        double fps = g_run.fps;
         f.write(reinterpret_cast<char const*>(&fps), sizeof(double));
         uint32_t count = static_cast<uint32_t>(results.size());
         f.write(reinterpret_cast<char const*>(&count), sizeof(uint32_t));
@@ -217,6 +218,7 @@ struct LevelMarks {
     bool hasCand = false;
     afw::Candidate cand;
     std::string macroPath;     // last macro used on this level
+    double tps = 240.0;        // ticks per second the frames are counted in
     std::vector<Mark> marks;   // sorted by frame
 };
 
@@ -299,6 +301,8 @@ LevelMarks readMarks(GJGameLevel* level) {
     out.cand.source = root["source"].asInt().unwrapOr(0) == 1 ? afw::FrameSource::LevelTime : afw::FrameSource::Progress;
     out.cand.offset = (int)root["offset"].asInt().unwrapOr(0);
     out.macroPath = root["macro"].asString().unwrapOr("");
+    out.tps = root["tps"].asDouble().unwrapOr(240.0);
+    if (out.tps <= 0) out.tps = 240.0;
     if (root["marks"].isArray()) {
         for (auto const& m : root["marks"]) {
             Mark mk;
@@ -329,6 +333,7 @@ void writeMarks(GJGameLevel* level, LevelMarks const& lm) {
         { "source", lm.cand.source == afw::FrameSource::LevelTime ? 1 : 0 },
         { "offset", lm.cand.offset },
         { "macro", lm.macroPath },
+        { "tps", lm.tps },
         { "marks", arr },
     });
     auto path = levelFile(level);
@@ -341,11 +346,12 @@ void writeMarks(GJGameLevel* level, LevelMarks const& lm) {
 // Merge new results into what's saved: inputs inside the measured frame range are
 // replaced, everything else is kept (so a level can be measured in sections).
 void saveMarks(GJGameLevel* level, std::vector<afw::Result> const& results, afw::Candidate cand,
-    std::string const& macroPath, int rangeMin, int rangeMax) {
+    std::string const& macroPath, int rangeMin, int rangeMax, double tps) {
     LevelMarks lm = readMarks(level);
     // A different sync means old frames may not line up; start fresh.
     if (lm.hasCand && (lm.cand.source != cand.source || lm.cand.offset != cand.offset)) lm.marks.clear();
     if (!lm.macroPath.empty() && lm.macroPath != macroPath) lm.marks.clear();
+    if (std::abs(lm.tps - tps) > 0.5) lm.marks.clear();
     std::erase_if(lm.marks, [&](Mark const& m) { return m.frame >= rangeMin && m.frame <= rangeMax; });
     for (auto const& r : results) {
         Mark m;
@@ -362,6 +368,7 @@ void saveMarks(GJGameLevel* level, std::vector<afw::Result> const& results, afw:
     lm.cand = cand;
     lm.hasCand = true;
     lm.macroPath = macroPath;
+    lm.tps = tps;
     writeMarks(level, lm);
 }
 
@@ -382,6 +389,7 @@ void refreshLStarRow();
 
 afw::lstar::Params lstarParams() {
     afw::lstar::Params p;
+    p.fps = g_marks.tps;
     p.target = Mod::get()->getSettingValue<double>("lstar-target-hours") * 3600.0;
     p.respawn = Mod::get()->getSettingValue<double>("lstar-respawn");
     p.kT = Mod::get()->getSettingValue<double>("lstar-kt");
@@ -636,7 +644,12 @@ void spawnMarker(PlayLayer* pl, Mark const& m) {
 // Called every tick during normal play.
 void tickOverlay(PlayLayer* pl) {
     if (!g_marks.loaded || g_run.active) return;
-    int frame = frameOf(pl, g_marks.cand.source) + g_marks.cand.offset;
+    // Macro recorded with physics bypass: count its ticks from level time, so the
+    // overlay lines up whether you play at 240 or at the macro's TPS.
+    int frame = !isBypass(g_marks.tps)
+        ? frameOf(pl, g_marks.cand.source) + g_marks.cand.offset
+        : (int)(pl->m_gameState.m_levelTime * g_marks.tps)
+            + (g_marks.cand.source == afw::FrameSource::LevelTime ? 1 : 0) + g_marks.cand.offset;
     auto const& marks = g_marks.marks;
 
     // Restart / respawn: recount everything up to the current frame.
@@ -773,7 +786,7 @@ void endRun(PlayLayer* pl, bool cancelled) {
         rangeMax = 0;
         for (auto const& r : results) rangeMax = std::max(rangeMax, r.ev.frame);
     }
-    saveMarks(pl->m_level, results, g_meas.chosen(), g_run.macroPath, g_run.rangeMin, rangeMax);
+    saveMarks(pl->m_level, results, g_meas.chosen(), g_run.macroPath, g_run.rangeMin, rangeMax, g_run.fps);
     loadMarks(pl->m_level);
     buildOverlay(pl);
 
@@ -824,7 +837,10 @@ void startRun(Loaded const& macro) {
 
     afw::Settings s;
     s.maxShift = (int)Mod::get()->getSettingValue<int64_t>("max-shift");
-    s.horizon = (int)Mod::get()->getSettingValue<int64_t>("horizon");
+    // Horizon / tail are set in 240-TPS frames; scale to the macro's TPS.
+    double tpsScale = macro.fps / 240.0;
+    s.horizon = (int)std::lround(Mod::get()->getSettingValue<int64_t>("horizon") * tpsScale);
+    s.calibrationTail = (int)std::lround(5 * 240 * tpsScale);
     s.measureReleases = Mod::get()->getSettingValue<bool>("measure-releases");
     auto src = Mod::get()->getSettingValue<std::string>("frame-source");
     s.autoSource = src == "Auto";
@@ -886,7 +902,8 @@ void confirmAndStart(Loaded macro) {
         macro.fileName, presses, macro.events.size(),
         macro.botName.empty() ? "" : fmt::format(" ({})", macro.botName),
         rel ? "presses and releases" : "presses", section,
-        macro.scaled ? fmt::format("\n<cr>Macro is {} TPS, converted to 240. Results may be off.</c>", macro.fps) : "");
+        macro.scaled ? fmt::format("\n<cy>Macro is {} TPS</c>: it'll replay at {} TPS (physics bypass) while measuring. "
+            "Turn off any other TPS / physics bypass first.", fmtW(macro.fps), fmtW(macro.fps)) : "");
 
     createQuickPopup("Auto Frame Window", body, "Cancel", "Start", 380.f, [macro](FLAlertLayer*, bool start) {
         if (!start || !PlayLayer::get()) return;
@@ -939,15 +956,15 @@ void showResultsList() {
     std::string md = fmt::format(
         "**{} clicks**: <cr>{} 1f</c> · <co>{} 2f</c> · <cy>{} 3f</c> · <cg>{} 4f+</c>\n\n"
         "{}\n\n"
-        "`+` = hit the test cap, could be bigger. Time is from level start at 240 TPS.\n\n"
+        "`+` = hit the test cap, could be bigger. Frames are {} TPS ticks; time is from level start.\n\n"
         "| # | Frame | Time | Window | Early | Late |\n|---|---|---|---|---|---|\n",
-        total, counts[0], counts[1], counts[2], counts[3], lstarSummary(true));
+        total, counts[0], counts[1], counts[2], counts[3], lstarSummary(true), fmtW(g_marks.tps));
     int n = 1;
     char const* tags[4] = { "<cr>", "<co>", "<cy>", "<cg>" };
     for (auto const& m : g_marks.marks) {
         if (!m.down) continue;
         md += fmt::format("| {}{} | {} | {:.2f}s | {}{}{}</c> | {} | {} |\n",
-            n++, m.p2 ? " (P2)" : "", m.frame, m.frame / 240.0,
+            n++, m.p2 ? " (P2)" : "", m.frame, m.frame / g_marks.tps,
             tags[bucketOf(m.window)], fmtW(m.window), m.capped ? "+" : "", fmtW(m.early), fmtW(m.late));
     }
     std::string title = pl && pl->m_level ? std::string(pl->m_level->m_levelName) : "Results";
@@ -1071,6 +1088,25 @@ class $modify(AFWBaseLayer, GJBaseGameLayer) {
         }
     }
 
+    // Physics bypass while measuring a non-240 TPS macro: steps of 1/TPS instead of
+    // 1/240, the same way xdBot's TPS bypass does it.
+    double getModifiedDelta(float dt) {
+        auto pl = PlayLayer::get();
+        if (!g_run.active || !isBypass(g_run.fps) || !pl || static_cast<GJBaseGameLayer*>(pl) != this)
+            return GJBaseGameLayer::getModifiedDelta(dt);
+
+        double step = 1.0 / g_run.fps;
+        if (m_resumeTimer > 0) {
+            m_resumeTimer--;
+            dt = 0.f;
+        }
+        double tw = m_gameState.m_timeWarp <= 1.0f ? m_gameState.m_timeWarp : 1.0;
+        double total = dt + m_extraDelta;
+        double used = std::round(total / (tw * step)) * tw * step;
+        m_extraDelta = total - used;
+        return used;
+    }
+
     // Block real clicks while measuring.
     void handleButton(bool down, int button, bool isPlayer1) {
         if (g_run.active && !g_run.injecting && static_cast<GJBaseGameLayer*>(PlayLayer::get()) == this) return;
@@ -1092,7 +1128,9 @@ class $modify(AFWBaseLayer, GJBaseGameLayer) {
 
             // 4 ticks per call, same as normal 60fps play. Inputs and deaths are
             // still handled per tick in processCommands / destroyPlayer.
-            GJBaseGameLayer::update(4.f / 240.f);
+            // Bypass macros: one physics step of 1/TPS per call (see getModifiedDelta).
+            if (isBypass(g_run.fps)) GJBaseGameLayer::update((float)(1.0 / g_run.fps));
+            else GJBaseGameLayer::update(4.f / 240.f);
 
             int nowFrame = macroFrame(pl);
             if (nowFrame == g_run.lastFrame) {

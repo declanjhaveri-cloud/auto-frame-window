@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.3.2
+- **Fix: macros recorded at other TPS (e.g. 357 TPS) now work.** Before, they were converted to 240 TPS, which moved inputs between ticks and changed the physics, so syncing failed (e.g. "best try died at frame 538"). Now the level replays **at the macro's own TPS** while measuring (physics bypass, the same way xdBot's TPS bypass does it), so the macro plays back exactly as recorded.
+- Windows for those macros are counted in the macro's own frames (at 357 TPS, 1 frame is about 2.8 ms). Markers, counter, L\* and the results table all use the macro's TPS. The `.fwc` export saves the real TPS.
+- *Frames to survive after input* is still set in 240 TPS frames and scales automatically.
+- The confirm popup says when a macro will replay at a different TPS. Turn off any other TPS / physics bypass mod while measuring.
+- Markers and counter line up during normal play even though you play at 240 TPS.
+
 ## v1.3.1
 - **CBF (alpha) now measures in tenths of a frame.** Windows read like `2.6`, `0.1` or `10.6`. The 1/2, 1/4 and 1/8 step options are gone.
 - Decimal windows show **one decimal at most** (markers, results table). Whole numbers stay plain, e.g. `2`.
